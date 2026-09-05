@@ -1402,3 +1402,19 @@ nav {
     flex-direction: column;
   }
 }
+
+
+/* FIX DASHBOARD FILTER / INSIGHT SPACING */
+
+.filters {
+  align-items: flex-start;
+}
+
+.filters .filter,
+.filters .update-button {
+  margin-top: auto;
+}
+
+.executive-insight {
+  margin-top: 0;
+}

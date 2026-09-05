@@ -132,6 +132,8 @@ function App() {
                 Update Analysis
               </button>
 
+              </div>
+
               {/* EXECUTIVE INSIGHT */}
 <div className="card executive-insight">
 
@@ -172,8 +174,6 @@ function App() {
 
     </div>
   </div>
-
-</div>
 
             </div>
 
