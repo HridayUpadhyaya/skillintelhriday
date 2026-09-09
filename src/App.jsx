@@ -44,6 +44,33 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
+  const safeDemandScore = (job) => {
+    const score = Number(calculateDemandScore(job))
+    return Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0
+  }
+
+  const exportText = (filename, content) => {
+    downloadTextFile(filename, content, 'text/plain;charset=utf-8')
+    showToast(`${filename} downloaded.`)
+  }
+
+  const analyseCourse = (course) => {
+    const missingSkills = course.industrySkills.filter((skill) => !course.currentSkills.includes(skill))
+    const alignedSkills = course.industrySkills.filter((skill) => course.currentSkills.includes(skill))
+    const alignment = course.industrySkills.length
+      ? Math.round((alignedSkills.length / course.industrySkills.length) * 100)
+      : 100
+    openModal('course-analysis', { course, missingSkills, alignedSkills, alignment })
+  }
+
+  const findCareerPaths = () => {
+    if (!candidateSkills.length) {
+      showToast('Select at least one skill to get career recommendations.')
+      return
+    }
+    setShowCareerResults(true)
+  }
+
   const exportLabourReport = () => {
     const rows = filteredLabourData.map((job) => ({
       Role: job.role,
@@ -53,7 +80,7 @@ function App() {
       Growth: job.growth,
       EmployerValidation: job.employerValidation,
       PlacementRate: job.placementRate,
-      DemandScore: calculateDemandScore(job)
+      DemandScore: safeDemandScore(job)
     }))
 
     const headers = Object.keys(rows[0] || {
@@ -215,14 +242,16 @@ function App() {
         <div className="sidebar-bottom">
           <button
             type="button"
-            className="nav-item sidebar-action"
+            className="nav-item"
+            style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', pointerEvents: 'auto' }}
             onClick={() => openModal('settings')}
           >
             Settings
           </button>
           <button
             type="button"
-            className="nav-item sidebar-action"
+            className="nav-item"
+            style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', pointerEvents: 'auto' }}
             onClick={() => openModal('help')}
           >
             Help
@@ -284,7 +313,7 @@ function App() {
                 </select>
               </div>
 
-              <button className="update-button" onClick={exportLabourReport}>
+              <button type="button" className="update-button" style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={exportLabourReport}>
                 Export Report
               </button>
             </div>
@@ -353,7 +382,7 @@ function App() {
                     <h2>Top Emerging Roles</h2>
                     <p>Current industry demand</p>
                   </div>
-                  <button className="view-button" onClick={() => setPage('Labour Demand')}>
+                  <button type="button" className="view-button" style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={() => setPage('Labour Demand')}>
                     View All
                   </button>
                 </div>
@@ -363,7 +392,7 @@ function App() {
                     <div className="empty-state">No labour data matches the selected filters.</div>
                   ) : (
                     filteredLabourData
-                      .map((job) => ({ ...job, score: calculateDemandScore(job) }))
+                      .map((job) => ({ ...job, score: safeDemandScore(job) }))
                       .sort((a, b) => b.score - a.score)
                       .slice(0, 5)
                       .map((job) => {
@@ -397,51 +426,26 @@ function App() {
                   </div>
                 </div>
                 {(() => {
-                  const alerts = [
-                    ...filteredLabourData
-                      .filter((job) => job.currentCapacity > job.demand)
-                      .sort((a, b) => (b.currentCapacity - b.demand) - (a.currentCapacity - a.demand))
-                      .slice(0, 1)
-                      .map((job) => ({
-                        type: 'danger',
-                        title: job.role,
-                        text: `Capacity exceeds demand by ${job.currentCapacity - job.demand} seats`
-                      })),
-                    ...filteredLabourData
-                      .filter((job) => job.demand > job.currentCapacity && job.growth >= 10)
-                      .sort((a, b) => b.growth - a.growth)
-                      .slice(0, 1)
-                      .map((job) => ({
-                        type: 'success',
-                        title: job.role,
-                        text: `Strong demand growth detected at +${job.growth}%`
-                      })),
-                    ...courseData
-                      .map((course) => ({
-                        course,
-                        missing: course.industrySkills.filter(
-                          (skill) => !course.currentSkills.includes(skill)
-                        )
-                      }))
-                      .filter((item) => item.missing.length >= 2)
-                      .sort((a, b) => b.missing.length - a.missing.length)
-                      .slice(0, 1)
-                      .map((item) => ({
-                        type: 'warning',
-                        title: item.course.name,
-                        text: `${item.missing.length} curriculum skill gaps detected`
-                      }))
-                  ]
-
-                  return alerts.length ? alerts.map((alert) => (
-                    <Alert
-                      key={`${alert.type}-${alert.title}`}
-                      type={alert.type}
-                      title={alert.title}
-                      text={alert.text}
-                    />
-                  )) : (
-                    <div className="empty-state">No priority alerts for the current data.</div>
+                  const oversupplied = [...filteredLabourData]
+                    .filter((job) => job.currentCapacity > job.demand)
+                    .sort((a, b) => (b.currentCapacity - b.demand) - (a.currentCapacity - a.demand))[0]
+                  const highGrowth = [...filteredLabourData].sort((a, b) => b.growth - a.growth)[0]
+                  const priority = [...filteredLabourData].sort((a, b) => (b.demand - b.currentCapacity) - (a.demand - a.currentCapacity))[0]
+                  if (!oversupplied && !highGrowth && !priority) {
+                    return <div className="empty-state">No priority signals available.</div>
+                  }
+                  return (
+                    <>
+                      {oversupplied && (
+                        <Alert type="danger" title={oversupplied.role} text="Current capacity is above market demand." />
+                      )}
+                      {highGrowth && (
+                        <Alert type="success" title={highGrowth.role} text={`Highest observed growth: ${highGrowth.growth > 0 ? '+' : ''}${highGrowth.growth}%.`} />
+                      )}
+                      {priority && priority.demand > priority.currentCapacity && (
+                        <Alert type="warning" title={priority.role} text={`Capacity gap of ${priority.demand - priority.currentCapacity} seats.`} />
+                      )}
+                    </>
                   )
                 })()}
               </div>
@@ -457,28 +461,44 @@ function App() {
                   </div>
                 </div>
                 <div className="skill-tags">
-                  {[
-                    ...new Set(filteredLabourData.flatMap((job) => job.skills))
-                  ]
-                    .sort((a, b) => a.localeCompare(b))
-                    .slice(0, 12)
-                    .map((skill) => (
-                      <span key={skill}>{skill}</span>
-                    ))}
-                  {!filteredLabourData.some((job) => job.skills.length) && (
-                    <span>No skills available.</span>
-                  )}
+                  {(() => {
+                    const counts = filteredLabourData.flatMap((job) => job.skills || []).reduce((acc, skill) => {
+                      acc[skill] = (acc[skill] || 0) + 1
+                      return acc
+                    }, {})
+                    const topSkills = Object.entries(counts)
+                      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                      .slice(0, 8)
+                    return topSkills.length
+                      ? topSkills.map(([skill, count]) => <span key={skill}>{skill} · {count}</span>)
+                      : <span>No skills available</span>
+                  })()}
                 </div>
               </div>
 
               <div className="card recommendation">
                 <div className="recommendation-label">AI RECOMMENDATION</div>
-                <h2>Increase EV training capacity</h2>
-                <p>
-                  Industry demand is growing rapidly while current
-                  training capacity remains below projected requirements.
-                </p>
-                <button className="primary-button" onClick={() => setPage('District Plans')}>
+                {(() => {
+                  const priority = [...filteredLabourData]
+                    .map((job) => ({ ...job, gap: job.demand - job.currentCapacity }))
+                    .sort((a, b) => b.gap - a.gap)[0]
+                  return priority ? (
+                    <>
+                      <h2>{priority.gap > 0 ? `Increase ${priority.role} training capacity` : `Review ${priority.role} training capacity`}</h2>
+                      <p>
+                        {priority.gap > 0
+                          ? `Current demand exceeds available capacity by ${priority.gap} seats.`
+                          : `Current capacity meets or exceeds demand by ${Math.abs(priority.gap)} seats.`}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h2>No current training recommendation</h2>
+                      <p>There is not enough filtered labour data to generate a recommendation.</p>
+                    </>
+                  )
+                })()}
+                <button type="button" className="primary-button" style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={() => setPage('District Plans')}>
                   View Recommendation →
                 </button>
               </div>
@@ -524,7 +544,7 @@ function App() {
                 </div>
               </div>
               {filteredLabourData.map((job) => {
-                const score = calculateDemandScore(job)
+                const score = safeDemandScore(job)
                 return (
                   <Role
                     key={job.role}
@@ -546,7 +566,7 @@ function App() {
                 </div>
               </div>
               {filteredLabourData.map((job) => {
-                const score = calculateDemandScore(job)
+                const score = safeDemandScore(job)
                 return (
                   <div className="intelligence-row" key={job.role}>
                     <div className="intelligence-role">
@@ -684,7 +704,7 @@ function App() {
                   <option>Nagpur</option>
                 </select>
               </div>
-              <button className="update-button" onClick={generateDistrictPlan}>
+              <button type="button" className="update-button" style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={generateDistrictPlan}>
                 Generate Training Plan
               </button>
             </div>
@@ -692,22 +712,22 @@ function App() {
             <div className="stats">
               <Stat
                 title="Projected Demand"
-                number={labourData.reduce((total, job) => total + job.demand, 0).toLocaleString()}
+                number={filteredLabourData.reduce((total, job) => total + job.demand, 0).toLocaleString()}
                 change="Annual requirement"
               />
               <Stat
                 title="Current Capacity"
-                number={labourData.reduce((total, job) => total + job.currentCapacity, 0).toLocaleString()}
+                number={filteredLabourData.reduce((total, job) => total + job.currentCapacity, 0).toLocaleString()}
                 change="Existing training seats"
               />
               <Stat
                 title="Capacity Gap"
-                number={labourData.reduce((total, job) => total + Math.max(job.demand - job.currentCapacity, 0), 0).toLocaleString()}
+                number={filteredLabourData.reduce((total, job) => total + Math.max(job.demand - job.currentCapacity, 0), 0).toLocaleString()}
                 change="Additional seats required"
               />
               <Stat
                 title="Priority Roles"
-                number={labourData.filter(job => job.demand > job.currentCapacity).length}
+                number={filteredLabourData.filter(job => job.demand > job.currentCapacity).length}
                 change="Capacity expansion needed"
               />
             </div>
@@ -720,11 +740,9 @@ function App() {
                 </div>
               </div>
 
-              {labourData.map(job => {
+              {filteredLabourData.map(job => {
                 const gap = job.demand - job.currentCapacity
-                const percentage = job.demand > 0
-                  ? Math.round((job.currentCapacity / job.demand) * 100)
-                  : job.currentCapacity > 0 ? 100 : 0
+                const percentage = Math.round((job.currentCapacity / job.demand) * 100)
 
                 return (
                   <div className="district-plan-row" key={job.role}>
@@ -768,7 +786,7 @@ function App() {
                 industry demand exceeds available seats. Oversupplied
                 programmes should be reviewed before adding new capacity.
               </p>
-              <button className="primary-button" onClick={generateDistrictPlan}>
+              <button type="button" className="primary-button" style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={generateDistrictPlan}>
                 Generate District Action Plan →
               </button>
             </div>
@@ -786,7 +804,7 @@ function App() {
               <Stat title="Courses Analysed" number={courseData.length} change="Industry alignment review" />
               <Stat
                 title="Courses Needing Updates"
-                number={courseData.filter(course => course.industrySkills.length > course.currentSkills.length).length}
+                number={courseData.filter(course => course.industrySkills.some(skill => !course.currentSkills.includes(skill))).length}
                 change="Curriculum gaps detected"
               />
               <Stat
@@ -859,6 +877,14 @@ function App() {
                         )}
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      className="view-button"
+                      style={{ cursor: 'pointer', pointerEvents: 'auto' }}
+                      onClick={() => analyseCourse(course)}
+                    >
+                      Analyse Course →
+                    </button>
                   </div>
                 )
               })}
@@ -866,13 +892,30 @@ function App() {
 
             <div className="card recommendation">
               <div className="recommendation-label">AI RECOMMENDATION</div>
-              <h2>Prioritise EV Technician curriculum revision</h2>
-              <p>
-                Industry requirements currently exceed the skills covered
-                by the existing EV Technician curriculum. Add high-voltage
-                safety, EV electrical systems and CAN Bus diagnostics to
-                improve job readiness.
-              </p>
+              {(() => {
+                const priorityCourse = [...courseData]
+                  .map((course) => ({
+                    course,
+                    gaps: course.industrySkills.filter((skill) => !course.currentSkills.includes(skill))
+                  }))
+                  .sort((a, b) => b.gaps.length - a.gaps.length)[0]
+
+                return priorityCourse ? (
+                  <>
+                    <h2>Prioritise {priorityCourse.course.name} curriculum revision</h2>
+                    <p>
+                      {priorityCourse.gaps.length
+                        ? `This course has ${priorityCourse.gaps.length} identified industry skill gap${priorityCourse.gaps.length === 1 ? '' : 's'}. Closing these gaps can improve job readiness.`
+                        : 'This course is currently aligned with the detected industry skill requirements.'}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2>No course revision required</h2>
+                    <p>No course data is currently available for a curriculum recommendation.</p>
+                  </>
+                )
+              })()}
               <button
                 className="primary-button"
                 onClick={() => {
@@ -963,12 +1006,26 @@ function App() {
 
             <div className="card recommendation">
               <div className="recommendation-label">INDUSTRY SIGNAL</div>
-              <h2>Employers are prioritising emerging technical skills</h2>
-              <p>
-                Employer feedback indicates strong demand for battery diagnostics, EV electrical systems, 
-                BMS and high-voltage safety. These requirements should be reflected in technical training curricula.
-              </p>
-              <button className="primary-button" onClick={viewEmployerSkills}>
+              {(() => {
+                const counts = employerData.flatMap((employer) => employer.skills || []).reduce((acc, skill) => {
+                  acc[skill] = (acc[skill] || 0) + 1
+                  return acc
+                }, {})
+                const topSkills = Object.entries(counts)
+                  .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                  .slice(0, 4)
+                  .map(([skill]) => skill)
+
+                return (
+                  <>
+                    <h2>Employers are prioritising emerging technical skills</h2>
+                    <p>
+                      The most frequently reported employer skills are {topSkills.length ? topSkills.join(', ') : 'not available yet'}.
+                    </p>
+                  </>
+                )
+              })()}
+              <button type="button" className="primary-button" style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={viewEmployerSkills}>
                 View Skill Requirements →
               </button>
             </div>
@@ -1027,7 +1084,7 @@ function App() {
               </div>
               <button
                 className="primary-button"
-                onClick={() => setShowCareerResults(true)}
+                onClick={findCareerPaths}
               >
                 Find My Career Path →
               </button>
@@ -1047,7 +1104,7 @@ function App() {
                   .map(job => {
                     const matchedSkills = job.skills.filter(skill => candidateSkills.includes(skill))
                     const skillMatch = job.skills.length ? Math.round((matchedSkills.length / job.skills.length) * 100) : 0
-                    const demandScore = calculateDemandScore(job)
+                    const demandScore = safeDemandScore(job)
                     const finalScore = Math.round(skillMatch * 0.6 + demandScore * 0.4)
                     
                     return { ...job, matchedSkills, skillMatch, finalScore, demandScore }
@@ -1111,68 +1168,12 @@ function App() {
           </Page>
         )}
 
-        {toast && (
-          <div
-            className="toast"
-            style={{
-              position: 'fixed',
-              right: 24,
-              bottom: 24,
-              zIndex: 1001,
-              padding: '12px 16px',
-              borderRadius: 10,
-              background: '#111827',
-              color: '#fff',
-              boxShadow: '0 10px 30px rgba(0,0,0,.2)'
-            }}
-          >
-            {toast}
-          </div>
-        )}
+        {toast && <div className="toast">{toast}</div>}
 
         {modal && (
-          <div
-            className="modal-backdrop"
-            onClick={closeModal}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 1000,
-              background: 'rgba(15, 23, 42, .55)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 24
-            }}
-          >
-            <div
-              className="modal-card"
-              onClick={(event) => event.stopPropagation()}
-              style={{
-                position: 'relative',
-                width: 'min(680px, 100%)',
-                maxHeight: '85vh',
-                overflowY: 'auto',
-                background: '#fff',
-                borderRadius: 16,
-                padding: 28,
-                boxShadow: '0 24px 80px rgba(0,0,0,.25)'
-              }}
-            >
-              <button
-                className="modal-close"
-                onClick={closeModal}
-                aria-label="Close"
-                style={{
-                  position: 'absolute',
-                  top: 12,
-                  right: 12,
-                  border: 0,
-                  background: 'transparent',
-                  fontSize: 28,
-                  cursor: 'pointer'
-                }}
-              >×</button>
+          <div className="modal-backdrop" onClick={closeModal}>
+            <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+              <button className="modal-close" onClick={closeModal} aria-label="Close">×</button>
 
               {modal.type === 'settings' && (
                 <>
@@ -1290,14 +1291,40 @@ function App() {
                       </div>
                     )) : <p>You already selected all detected skills for this role.</p>}
                   </div>
-                  <button
-                    className="primary-button"
-                    onClick={() => {
-                      closeModal()
-                      showToast(`Learning path saved for ${modal.job.role}.`)
-                    }}
-                  >
+                  <button className="primary-button" onClick={() => showToast('Learning path saved for later.')}>
                     Save Learning Path →
+                  </button>
+                </>
+              )}
+
+              {modal.type === 'course-analysis' && (
+                <>
+                  <div className="recommendation-label">COURSE ANALYSIS</div>
+                  <h2>{modal.course.name}</h2>
+                  <p>Target role: {modal.course.role}</p>
+                  <div className="modal-section">
+                    <strong>Industry alignment</strong>
+                    <span>{modal.alignment}%</span>
+                  </div>
+                  <div className="modal-list">
+                    <h3>Skills already covered</h3>
+                    {modal.alignedSkills.length ? modal.alignedSkills.map((skill) => (
+                      <div className="modal-row" key={skill}><span>✓ {skill}</span></div>
+                    )) : <p>No industry-required skills are currently covered.</p>}
+                  </div>
+                  <div className="modal-list">
+                    <h3>Skills to add</h3>
+                    {modal.missingSkills.length ? modal.missingSkills.map((skill) => (
+                      <div className="modal-row" key={skill}><span>+ {skill}</span></div>
+                    )) : <p>Course is fully aligned.</p>}
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ cursor: 'pointer', pointerEvents: 'auto' }}
+                    onClick={() => updateCurriculum(modal.course)}
+                  >
+                    Update Curriculum →
                   </button>
                 </>
               )}
