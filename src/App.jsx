@@ -1,44 +1,50 @@
-import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react'
-import './App.css'
-import { calculateDemandScore } from './data'
-import { fetchLabourData, fetchCourseData, fetchEmployerData } from './api'
-// ── Sub-components ──────────────────────────────────────────────────
-const Page = ({ children }) => <div className="page-content">{children}</div>
-const Stat = ({ title, number, change }) => (
-  <div className="stat-card">
-    <div className="stat-title">{title}</div>
-    <div className="stat-number">{number}</div>
-    <div className="stat-change">{change}</div>
-  </div>
-)
-const Role = ({ name, sector, value, width, low }) => (
-  <div className="role">
-    <div className="role-info">
-      <strong>{name}</strong>
-      <span>{sector}</span>
+Review
+        {(modal?.type === 'curriculum' || modal?.type === 'course-analysis') && (
+          <div className="modal-list">
+            <div className="modal-section">
+              <strong>Alignment Score</strong>
+              <span>{modal.alignment ?? 'N/A'}%</span>
+            </div>
+            <div className="modal-section">
+              <strong>Aligned Skills</strong>
+              <span>{modal.alignedSkills?.length || 0}</span>
+            </div>
+            <div className="modal-section">
+              <strong>Missing Skills</strong>
+              <span className={modal.missingSkills?.length ? 'negative-text' : ''}>
+                {modal.missingSkills?.length || 0}
+              </span>
+            </div>
+            {modal.missingSkills?.length > 0 && (
+              <>
+                <p style={{ marginTop: '16px' }}>
+                  <strong>Skills to add to curriculum:</strong>
+                </p>
+                {modal.missingSkills.map((s, i) => (
+                  <div className="missing-skill" key={i}>
+                    {s}
+                  </div>
+                ))}
+              </>
+            )}
+            {!modal.missingSkills?.length && (
+              <div className="no-gap" style={{ marginTop: '16px' }}>
+                Fully Aligned — no curriculum changes needed.
+              </div>
+            )}
+          </div>
+        )}
+        {modal?.type === 'skills' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {modal.skills?.map((skill, idx) => (
+              <span className="employer-skill" key={idx}>
+                {skill}
+              </span>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
-    <div className="bar-container">
-      <div className={`bar ${low ? 'low' : ''}`} style={{ width }}></div>
-    </div>
-    <strong>{value}</strong>
-  </div>
-)
-// Bug 3 + 5: className fixed from `alert-${type}` → `${type}`,
-// and DOM restructured to match CSS (.alert-icon + <strong> + <p>).
-const Alert = ({ type, icon, title, text }) => (
-  <div className={`alert ${type}`}>
-    <div className="alert-icon">{icon || '!'}</div>
-    <div>
-      <strong>{title}</strong>
-      <p>{text}</p>
-    </div>
-  </div>
-)
-// Bug 6: Modal now uses .modal-backdrop / .modal-card / .modal-close
-// CSS classes instead of inline styles.
-const Modal = ({ isOpen, onClose, title, children }) => {
-  if (!isOpen) return null
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>&times;</button>
+  )
+}
+export default App
