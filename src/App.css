@@ -1144,6 +1144,21 @@ nav {
   color: #d43c3c;
 }
 
+.plan-recommendation.balanced strong {
+  color: #2b78c5;
+}
+
+.plan-recommendation.balanced span {
+  color: #2b78c5;
+}
+
+.capacity-area {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 140px;
+}
+
 
 @media (max-width: 1000px) {
 
@@ -1417,4 +1432,129 @@ nav {
 
 .executive-insight {
   margin-top: 0;
+}
+
+/* RESILIENCE BANNER & NOTIFICATIONS */
+
+.data-mode-banner {
+  background: #fef8e7;
+  border-bottom: 1px solid #f9e2af;
+  color: #8c6314;
+  padding: 10px 40px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.data-mode-banner strong {
+  font-weight: 600;
+}
+
+.data-mode-banner button {
+  background: #fff;
+  border: 1px solid #e0be77;
+  color: #8c6314;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 12px;
+}
+
+.data-mode-banner button:hover {
+  background: #fdf1d4;
+}
+
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: #8992a2;
+}
+
+.empty-state p {
+  font-size: 14px;
+  margin-top: 6px;
+}
+
+/* FEEDBACK TOAST */
+
+.toast-notification {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #101828;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  z-index: 999;
+  animation: slideUp 0.25s ease-out;
+}
+
+.toast-notification.success {
+  border-left: 4px solid #35c6a5;
+}
+
+.toast-notification.info {
+  border-left: 4px solid #3b82f6;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* MODAL / DIALOG */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  background: white;
+  width: 90%;
+  max-width: 520px;
+  border-radius: 12px;
+  padding: 24px 28px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal-card h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+  color: #172033;
+}
+
+.modal-card p {
+  font-size: 13px;
+  color: #596476;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }

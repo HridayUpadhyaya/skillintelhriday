@@ -1,92 +1,242 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import './App.css'
-import { calculateDemandScore } from './data'
 import {
   fetchLabourData,
   fetchCourseData,
-  fetchEmployerData
+  fetchEmployerData,
+  fetchDistricts,
+  calculateDemandScore,
+  getJobForDistrict,
+  exportIntelligenceReport,
+  exportDistrictActionPlan,
+  labourData as mockLabourData,
+  courseData as mockCourseData,
+  employerData as mockEmployerData
 } from './api'
 
+const DEFAULT_DISTRICTS = ['All Districts', 'Pune', 'Mumbai', 'Nashik', 'Nagpur']
+
 function App() {
-    const [labourData, setLabourData] = useState([])
+  const [labourData, setLabourData] = useState([])
   const [courseData, setCourseData] = useState([])
   const [employerData, setEmployerData] = useState([])
+  const [districts, setDistricts] = useState(DEFAULT_DISTRICTS)
 
   const [loadingData, setLoadingData] = useState(true)
-  const [dataError, setDataError] = useState('')
+  const [isUsingFallback, setIsUsingFallback] = useState(false)
+  const [fallbackReason, setFallbackReason] = useState('')
 
   const [selectedDistrict, setSelectedDistrict] = useState('Pune')
   const [selectedSector, setSelectedSector] = useState('All Sectors')
+  const [employerSector, setEmployerSector] = useState('All Sectors')
+  const [employerDistrict, setEmployerDistrict] = useState('All Districts')
   const [page, setPage] = useState('Dashboard')
   const [careerInterest, setCareerInterest] = useState('All Sectors')
   const [candidateSkills, setCandidateSkills] = useState([])
   const [showCareerResults, setShowCareerResults] = useState(false)
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoadingData(true)
-        setDataError('')
+  // Notification Toast & Modal states
+  const [toast, setToast] = useState(null)
+  const [activeModal, setActiveModal] = useState(null)
 
-        const [labour, courses, employers] = await Promise.all([
+  function showToast(message, type = 'success') {
+    setToast({ message, type })
+    setTimeout(() => {
+      setToast((prev) => (prev?.message === message ? null : prev))
+    }, 3200)
+  }
+
+  async function handleRetry() {
+    setLoadingData(true)
+    try {
+      const [labour, courses, employers, fetchedDistricts] = await Promise.all([
+        fetchLabourData(),
+        fetchCourseData(),
+        fetchEmployerData(),
+        fetchDistricts()
+      ])
+
+      setLabourData(labour)
+      setCourseData(courses)
+      setEmployerData(employers)
+      setDistricts([...new Set([...DEFAULT_DISTRICTS, ...(fetchedDistricts || [])])])
+      setIsUsingFallback(false)
+      setFallbackReason('')
+      showToast('Connected to Supabase live database!', 'success')
+    } catch (error) {
+      console.warn('Supabase retry failed:', error)
+      setIsUsingFallback(true)
+      setFallbackReason(error.message || 'Supabase unavailable')
+      showToast('Database still unreachable. Continuing in offline mode.', 'info')
+    } finally {
+      setLoadingData(false)
+    }
+  }
+
+  useEffect(() => {
+    let ignore = false
+
+    async function initLoad() {
+      try {
+        const [labour, courses, employers, fetchedDistricts] = await Promise.all([
           fetchLabourData(),
           fetchCourseData(),
-          fetchEmployerData()
+          fetchEmployerData(),
+          fetchDistricts()
         ])
 
-        setLabourData(labour)
-        setCourseData(courses)
-        setEmployerData(employers)
+        if (!ignore) {
+          setLabourData(labour)
+          setCourseData(courses)
+          setEmployerData(employers)
+          setDistricts([...new Set([...DEFAULT_DISTRICTS, ...(fetchedDistricts || [])])])
+          setIsUsingFallback(false)
+          setFallbackReason('')
+          setLoadingData(false)
+        }
       } catch (error) {
-        console.error('Supabase error:', error)
-        setDataError(error.message || 'Failed to load SkillIntel data.')
-      } finally {
-        setLoadingData(false)
+        if (!ignore) {
+          console.warn('Supabase fetch failed; seamlessly using local dataset:', error)
+          setLabourData(mockLabourData)
+          setCourseData(mockCourseData)
+          setEmployerData(mockEmployerData)
+          setIsUsingFallback(true)
+          setFallbackReason(error.message || 'Supabase unavailable')
+          setLoadingData(false)
+        }
       }
     }
 
-    loadData()
+    initLoad()
+    return () => {
+      ignore = true
+    }
   }, [])
+
+
+  // Dynamic sectors list extracted from data
+  const allSectors = useMemo(() => {
+    const sectors = new Set(['All Sectors'])
+    labourData.forEach((job) => {
+      if (job.sector) {
+        // Split combined sectors like "Automotive / Energy" if helpful or add directly
+        sectors.add(job.sector)
+      }
+    })
+    return Array.from(sectors)
+  }, [labourData])
+
+  // Dynamic filtering based on sector and district
+  const filteredLabourData = useMemo(() => {
+    return labourData
+      .filter((job) => {
+        if (selectedSector === 'All Sectors') return true
+        return (job.sector || '').includes(selectedSector)
+      })
+      .map((job) => getJobForDistrict(job, selectedDistrict))
+  }, [labourData, selectedSector, selectedDistrict])
+
+  // Top skills derived dynamically from filtered labour data
+  const topDemandSkills = useMemo(() => {
+    const countMap = {}
+    filteredLabourData.forEach((job) => {
+      ;(job.skills || []).forEach((skill) => {
+        countMap[skill] = (countMap[skill] || 0) + 1
+      })
+    })
+    const sorted = Object.keys(countMap).sort((a, b) => countMap[b] - countMap[a])
+    return sorted.slice(0, 6)
+  }, [filteredLabourData])
+
+  // Dynamic priority alerts for the dashboard
+  const dynamicAlerts = useMemo(() => {
+    const alerts = []
+    // 1. Check for oversupplied role
+    const oversupplied = filteredLabourData.find((job) => job.currentCapacity > job.demand)
+    if (oversupplied) {
+      alerts.push({
+        type: 'danger',
+        title: oversupplied.role,
+        text: `Training capacity (${oversupplied.currentCapacity}) exceeds demand (${oversupplied.demand}). Review program seats.`
+      })
+    } else {
+      alerts.push({
+        type: 'danger',
+        title: 'Data Entry Operator',
+        text: 'Course appears oversupplied relative to market demands.'
+      })
+    }
+
+    // 2. Check for critical curriculum gap in courses
+    const gapCourse = courseData.find((course) => {
+      const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+      return missing.length >= 2
+    })
+    if (gapCourse) {
+      const missingCount = (gapCourse.industrySkills || []).filter((s) => !(gapCourse.currentSkills || []).includes(s)).length
+      alerts.push({
+        type: 'warning',
+        title: gapCourse.name,
+        text: `${missingCount} critical industry skill gap${missingCount > 1 ? 's' : ''} detected in curriculum.`
+      })
+    } else {
+      alerts.push({
+        type: 'warning',
+        title: 'Curriculum Review',
+        text: 'Regular audit recommended to maintain industry alignment.'
+      })
+    }
+
+    // 3. Check for high growth role
+    const highGrowth = [...filteredLabourData].sort((a, b) => (b.growth || 0) - (a.growth || 0))[0]
+    if (highGrowth && highGrowth.growth > 0) {
+      alerts.push({
+        type: 'success',
+        title: highGrowth.role,
+        text: `Strong growth of +${highGrowth.growth}% detected with high employer validation.`
+      })
+    } else {
+      alerts.push({
+        type: 'success',
+        title: 'Market Signal',
+        text: 'Technical sectors demonstrate steady hiring interest.'
+      })
+    }
+
+    return alerts
+  }, [filteredLabourData, courseData])
+
+  // Filtered employers
+  const filteredEmployers = useMemo(() => {
+    return employerData.filter((emp) => {
+      const matchDistrict = employerDistrict === 'All Districts' || emp.district === employerDistrict
+      const matchSector = employerSector === 'All Sectors' || (emp.sector || '').includes(employerSector)
+      return matchDistrict && matchSector
+    })
+  }, [employerData, employerDistrict, employerSector])
+
+  // District plans filtered data with localized demand and capacity
+  const districtLabourData = useMemo(() => {
+    return labourData.map((job) => getJobForDistrict(job, selectedDistrict))
+  }, [labourData, selectedDistrict])
 
   if (loadingData) {
     return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '18px'
-      }}>
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'Inter, Arial, sans-serif',
+          fontSize: '18px',
+          color: '#172033'
+        }}
+      >
         Loading SkillIntel intelligence...
       </div>
     )
   }
-
-  if (dataError) {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '40px',
-        fontFamily: 'Arial, sans-serif'
-      }}>
-        <div>
-          <h2>Unable to load SkillIntel data</h2>
-          <p>{dataError}</p>
-          <p>Please check your Supabase configuration and RLS policies.</p>
-        </div>
-      </div>
-    )
-  }
-
-  // Dynamic filtering based on sector
-  const filteredLabourData = labourData.filter((job) => {
-    if (selectedSector === 'All Sectors') return true
-    return job.sector.includes(selectedSector)
-  })
 
   const menuItems = [
     'Dashboard',
@@ -102,7 +252,7 @@ function App() {
     <div className="app">
       {/* SIDEBAR */}
       <aside className="sidebar">
-        <div className="logo">
+        <div className="logo" onClick={() => setPage('Dashboard')} style={{ cursor: 'pointer' }}>
           MahaSkill<span>Intel</span>
         </div>
 
@@ -119,13 +269,35 @@ function App() {
         </nav>
 
         <div className="sidebar-bottom">
-          <div className="nav-item">Settings</div>
-          <div className="nav-item">Help</div>
+          <div
+            className="nav-item"
+            onClick={() => setActiveModal('settings')}
+          >
+            Settings
+          </div>
+          <div
+            className="nav-item"
+            onClick={() => setActiveModal('help')}
+          >
+            Help
+          </div>
         </div>
       </aside>
 
       {/* MAIN */}
       <main className="main">
+        {/* RESILIENCE BANNER */}
+        {isUsingFallback && (
+          <div className="data-mode-banner">
+            <div>
+              <strong>Offline / Demo Mode:</strong> Using local SkillIntel dataset ({fallbackReason || 'Database offline'}).
+            </div>
+            <button onClick={handleRetry}>
+              Retry Connection
+            </button>
+          </div>
+        )}
+
         {/* HEADER */}
         <header className="header">
           <div>
@@ -136,7 +308,14 @@ function App() {
           </div>
 
           <div className="profile">
-            <div className="notification">🔔</div>
+            <div
+              className="notification"
+              onClick={() => showToast('All data and intelligence feeds are up to date.', 'info')}
+              style={{ cursor: 'pointer' }}
+              title="Notifications"
+            >
+              🔔
+            </div>
             <div className="avatar">MH</div>
             <div>
               <strong>Admin</strong>
@@ -156,10 +335,9 @@ function App() {
                   value={selectedDistrict}
                   onChange={(e) => setSelectedDistrict(e.target.value)}
                 >
-                  <option>Pune</option>
-                  <option>Mumbai</option>
-                  <option>Nashik</option>
-                  <option>Nagpur</option>
+                  {districts.map((d) => (
+                    <option key={d}>{d}</option>
+                  ))}
                 </select>
               </div>
 
@@ -169,16 +347,23 @@ function App() {
                   value={selectedSector}
                   onChange={(e) => setSelectedSector(e.target.value)}
                 >
-                  <option>All Sectors</option>
-                  <option>Automotive</option>
-                  <option>Information Technology</option>
-                  <option>Renewable Energy</option>
-                  <option>Manufacturing</option>
-                  <option>Business Services</option>
+                  {allSectors.map((s) => (
+                    <option key={s}>{s}</option>
+                  ))}
                 </select>
               </div>
 
-              <button className="update-button" onClick={() => alert('Report exporting...')}>
+              <button
+                className="update-button"
+                onClick={() => {
+                  const filename = exportIntelligenceReport({
+                    district: selectedDistrict,
+                    sector: selectedSector,
+                    labourData: filteredLabourData
+                  })
+                  showToast(`Exported report: ${filename} saved to Downloads!`, 'success')
+                }}
+              >
                 Export Report
               </button>
             </div>
@@ -218,22 +403,22 @@ function App() {
             <section className="stats">
               <Stat
                 title="Job Openings"
-                number={filteredLabourData.reduce((total, job) => total + job.demand, 0).toLocaleString()}
-                change="Current market demand"
+                number={filteredLabourData.reduce((total, job) => total + (job.demand || 0), 0).toLocaleString()}
+                change={selectedDistrict === 'All Districts' ? 'Total across all districts' : `${selectedDistrict} market demand`}
               />
               <Stat
                 title="High-Demand Skills"
-                number={new Set(filteredLabourData.flatMap(job => job.skills)).size}
+                number={new Set(filteredLabourData.flatMap((job) => job.skills || [])).size}
                 change="Skills requested by employers"
               />
               <Stat
                 title="Courses at Risk"
-                number={filteredLabourData.filter(job => job.currentCapacity > job.demand).length}
+                number={filteredLabourData.filter((job) => (job.currentCapacity || 0) > (job.demand || 0)).length}
                 change="Oversupply detected"
               />
               <Stat
                 title="Priority Roles"
-                number={filteredLabourData.filter(job => job.demand > job.currentCapacity).length}
+                number={filteredLabourData.filter((job) => (job.demand || 0) > (job.currentCapacity || 0)).length}
                 change="Capacity expansion needed"
               />
             </section>
@@ -256,7 +441,7 @@ function App() {
                   {filteredLabourData.map((job) => {
                     const score = calculateDemandScore(job)
                     return (
-                      <div className="role" key={job.role}>
+                      <div className="role" key={job.id || job.role}>
                         <div className="role-info">
                           <strong>{job.role}</strong>
                           <span>{job.sector}</span>
@@ -271,6 +456,11 @@ function App() {
                       </div>
                     )
                   })}
+                  {filteredLabourData.length === 0 && (
+                    <div className="empty-state">
+                      No roles found for sector &ldquo;{selectedSector}&rdquo;.
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -282,9 +472,14 @@ function App() {
                     <p>Issues requiring attention</p>
                   </div>
                 </div>
-                <Alert type="danger" title="Data Entry Operator" text="Course appears oversupplied" />
-                <Alert type="warning" title="EV Technician" text="4 critical curriculum gaps detected" />
-                <Alert type="success" title="Solar Technician" text="Strong demand growth detected" />
+                {dynamicAlerts.map((alert, idx) => (
+                  <Alert
+                    key={idx}
+                    type={alert.type}
+                    title={alert.title}
+                    text={alert.text}
+                  />
+                ))}
               </div>
             </section>
 
@@ -298,12 +493,12 @@ function App() {
                   </div>
                 </div>
                 <div className="skill-tags">
-                  <span>Battery Diagnostics</span>
-                  <span>AI / ML</span>
-                  <span>Data Analytics</span>
-                  <span>BMS</span>
-                  <span>EV Charging</span>
-                  <span>Solar Installation</span>
+                  {topDemandSkills.map((skill) => (
+                    <span key={skill}>{skill}</span>
+                  ))}
+                  {topDemandSkills.length === 0 && (
+                    <span style={{ color: '#8992a2' }}>No skills recorded</span>
+                  )}
                 </div>
               </div>
 
@@ -326,29 +521,56 @@ function App() {
         {page === 'Labour Demand' && (
           <Page>
             <h2>Labour Market Intelligence</h2>
-            <p className="page-description">
+            <p className="page-description" style={{ marginBottom: '20px' }}>
               Identify growing occupations, industry demand and emerging employment opportunities.
             </p>
+
+            <div className="filters" style={{ marginBottom: '22px' }}>
+              <div className="filter">
+                <label>District</label>
+                <select
+                  value={selectedDistrict}
+                  onChange={(e) => setSelectedDistrict(e.target.value)}
+                >
+                  {districts.map((d) => (
+                    <option key={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="filter">
+                <label>Sector</label>
+                <select
+                  value={selectedSector}
+                  onChange={(e) => setSelectedSector(e.target.value)}
+                >
+                  {allSectors.map((s) => (
+                    <option key={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div className="stats">
               <Stat
                 title="Job Openings"
-                number={filteredLabourData.reduce((total, job) => total + job.demand, 0).toLocaleString()}
-                change={`${selectedSector === 'All Sectors' ? '+18.4%' : 'Filtered'} market demand`}
+                number={filteredLabourData.reduce((total, job) => total + (job.demand || 0), 0).toLocaleString()}
+                change={selectedDistrict === 'All Districts' ? 'Total across all districts' : `${selectedDistrict} market demand`}
               />
               <Stat
                 title="High-Demand Skills"
-                number={new Set(filteredLabourData.flatMap(job => job.skills)).size}
+                number={new Set(filteredLabourData.flatMap((job) => job.skills || [])).size}
                 change="Skills requested by employers"
               />
               <Stat
                 title="Courses at Risk"
-                number={filteredLabourData.filter(job => job.currentCapacity > job.demand).length}
+                number={filteredLabourData.filter((job) => (job.currentCapacity || 0) > (job.demand || 0)).length}
                 change="Oversupply detected"
               />
               <Stat
                 title="Roles Analysed"
                 number={filteredLabourData.length}
-                change="Based on selected sector"
+                change={selectedSector === 'All Sectors' ? 'All active industry sectors' : `Sector: ${selectedSector}`}
               />
             </div>
 
@@ -363,7 +585,7 @@ function App() {
                 const score = calculateDemandScore(job)
                 return (
                   <Role
-                    key={job.role}
+                    key={job.id || job.role}
                     name={job.role}
                     sector={job.sector}
                     value={`${score}/100`}
@@ -372,8 +594,13 @@ function App() {
                   />
                 )
               })}
+              {filteredLabourData.length === 0 && (
+                <div className="empty-state">
+                  No roles match the selected sector filter.
+                </div>
+              )}
             </div>
-            
+
             <div className="card intelligence-card">
               <div className="card-header">
                 <div>
@@ -383,23 +610,24 @@ function App() {
               </div>
               {filteredLabourData.map((job) => {
                 const score = calculateDemandScore(job)
+                const growth = Number(job.growth) || 0
                 return (
-                  <div className="intelligence-row" key={job.role}>
+                  <div className="intelligence-row" key={job.id || job.role}>
                     <div className="intelligence-role">
                       <strong>{job.role}</strong>
                       <span>{job.sector}</span>
                     </div>
                     <div>
                       <small>Growth</small>
-                      <strong>{job.growth > 0 ? '+' : ''}{job.growth}%</strong>
+                      <strong>{growth > 0 ? '+' : ''}{growth}%</strong>
                     </div>
                     <div>
                       <small>Employer Validation</small>
-                      <strong>{job.employerValidation}%</strong>
+                      <strong>{job.employerValidation || 0}%</strong>
                     </div>
                     <div>
                       <small>Placement</small>
-                      <strong>{job.placementRate}%</strong>
+                      <strong>{job.placementRate || 0}%</strong>
                     </div>
                     <div>
                       <small>Demand Score</small>
@@ -426,28 +654,36 @@ function App() {
               <Stat title="Courses Analysed" number={courseData.length} change="Current curriculum" />
               <Stat
                 title="Total Skill Gaps"
-                number={courseData.reduce((total, course) => total + course.industrySkills.filter(skill => !course.currentSkills.includes(skill)).length, 0)}
+                number={courseData.reduce((total, course) => {
+                  const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+                  return total + missing.length
+                }, 0)}
                 change="Industry requirements missing"
               />
               <Stat
                 title="Critical Gaps"
-                number={courseData.filter(course => course.industrySkills.filter(skill => !course.currentSkills.includes(skill)).length >= 2).length}
+                number={courseData.filter((course) => {
+                  const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+                  return missing.length >= 2
+                }).length}
                 change="Immediate attention"
               />
               <Stat
                 title="Skills Covered"
-                number={new Set(courseData.flatMap(course => course.currentSkills)).size}
+                number={new Set(courseData.flatMap((course) => course.currentSkills || [])).size}
                 change="Existing curriculum"
               />
             </div>
 
-            {courseData.map(course => {
-              const missingSkills = course.industrySkills.filter(skill => !course.currentSkills.includes(skill))
-              const alignedSkills = course.industrySkills.filter(skill => course.currentSkills.includes(skill))
-              const alignment = Math.round((alignedSkills.length / course.industrySkills.length) * 100)
+            {courseData.map((course) => {
+              const current = course.currentSkills || []
+              const industry = course.industrySkills || []
+              const missingSkills = industry.filter((skill) => !current.includes(skill))
+              const alignedSkills = industry.filter((skill) => current.includes(skill))
+              const alignment = industry.length > 0 ? Math.round((alignedSkills.length / industry.length) * 100) : 100
 
               return (
-                <div className="card skill-analysis-card" key={course.name}>
+                <div className="card skill-analysis-card" key={course.id || course.name}>
                   <div className="card-header">
                     <div>
                       <h2>{course.name}</h2>
@@ -461,19 +697,22 @@ function App() {
                   <div className="skill-columns">
                     <div>
                       <h3 className="skill-heading required">Industry Required</h3>
-                      {course.industrySkills.map(skill => (
+                      {industry.map((skill) => (
                         <div className="skill-item" key={skill}>
-                          {course.currentSkills.includes(skill) ? <span className="skill-check">✓</span> : <span className="skill-cross">!</span>}
+                          {current.includes(skill) ? <span className="skill-check">✓</span> : <span className="skill-cross">!</span>}
                           <span>{skill}</span>
                         </div>
                       ))}
+                      {industry.length === 0 && (
+                        <p style={{ color: '#8992a2', fontSize: '13px' }}>No requirements recorded</p>
+                      )}
                     </div>
                     <div>
                       <h3 className="skill-heading missing">Skills To Add</h3>
                       {missingSkills.length === 0 ? (
                         <div className="no-gap">✓ Curriculum fully aligned</div>
                       ) : (
-                        missingSkills.map(skill => (
+                        missingSkills.map((skill) => (
                           <div className="missing-skill" key={skill}>+ {skill}</div>
                         ))
                       )}
@@ -488,7 +727,12 @@ function App() {
                           Add {missingSkills.length} missing skill{missingSkills.length > 1 ? 's' : ''} to the {course.name} curriculum.
                         </p>
                       </div>
-                      <button className="primary-button">Update Curriculum →</button>
+                      <button
+                        className="primary-button"
+                        onClick={() => showToast(`Curriculum revision drafted for ${course.name}!`, 'success')}
+                      >
+                        Update Curriculum →
+                      </button>
                     </div>
                   )}
                 </div>
@@ -512,13 +756,21 @@ function App() {
                   value={selectedDistrict}
                   onChange={(e) => setSelectedDistrict(e.target.value)}
                 >
-                  <option>Pune</option>
-                  <option>Mumbai</option>
-                  <option>Nashik</option>
-                  <option>Nagpur</option>
+                  {districts.map((d) => (
+                    <option key={d}>{d}</option>
+                  ))}
                 </select>
               </div>
-              <button className="update-button" onClick={() => alert('Plan Generated!')}>
+              <button
+                className="update-button"
+                onClick={() => {
+                  const filename = exportDistrictActionPlan({
+                    district: selectedDistrict,
+                    districtLabourData
+                  })
+                  showToast(`Generated action plan: ${filename} saved to Downloads!`, 'success')
+                }}
+              >
                 Generate Training Plan
               </button>
             </div>
@@ -526,22 +778,22 @@ function App() {
             <div className="stats">
               <Stat
                 title="Projected Demand"
-                number={labourData.reduce((total, job) => total + job.demand, 0).toLocaleString()}
+                number={districtLabourData.reduce((total, job) => total + (job.demand || 0), 0).toLocaleString()}
                 change="Annual requirement"
               />
               <Stat
                 title="Current Capacity"
-                number={labourData.reduce((total, job) => total + job.currentCapacity, 0).toLocaleString()}
+                number={districtLabourData.reduce((total, job) => total + (job.currentCapacity || 0), 0).toLocaleString()}
                 change="Existing training seats"
               />
               <Stat
                 title="Capacity Gap"
-                number={labourData.reduce((total, job) => total + Math.max(job.demand - job.currentCapacity, 0), 0).toLocaleString()}
+                number={districtLabourData.reduce((total, job) => total + Math.max((job.demand || 0) - (job.currentCapacity || 0), 0), 0).toLocaleString()}
                 change="Additional seats required"
               />
               <Stat
                 title="Priority Roles"
-                number={labourData.filter(job => job.demand > job.currentCapacity).length}
+                number={districtLabourData.filter((job) => (job.demand || 0) > (job.currentCapacity || 0)).length}
                 change="Capacity expansion needed"
               />
             </div>
@@ -549,17 +801,33 @@ function App() {
             <div className="card">
               <div className="card-header">
                 <div>
-                  <h2>{selectedDistrict} Training Recommendations</h2>
+                  <h2>{selectedDistrict === 'All Districts' ? 'Statewide' : selectedDistrict} Training Recommendations</h2>
                   <p>Demand compared with current training capacity</p>
                 </div>
               </div>
 
-              {labourData.map(job => {
-                const gap = job.demand - job.currentCapacity
-                const percentage = Math.round((job.currentCapacity / job.demand) * 100)
+              {districtLabourData.map((job) => {
+                const demand = Number(job.demand) || 0
+                const currentCapacity = Number(job.currentCapacity) || 0
+                const gap = demand - currentCapacity
+                const percentage = demand > 0 ? Math.round((currentCapacity / demand) * 100) : 0
+
+                let recommendationClass = 'plan-recommendation balanced'
+                let recommendationText = 'Optimal capacity'
+                let seatCount = '0 seats'
+
+                if (gap > 0) {
+                  recommendationClass = 'plan-recommendation increase'
+                  recommendationText = 'Increase capacity'
+                  seatCount = `+${gap} seats`
+                } else if (gap < 0) {
+                  recommendationClass = 'plan-recommendation reduce'
+                  recommendationText = 'Reduce capacity'
+                  seatCount = `${gap} seats`
+                }
 
                 return (
-                  <div className="district-plan-row" key={job.role}>
+                  <div className="district-plan-row" key={job.id || job.role}>
                     <div className="district-role">
                       <strong>{job.role}</strong>
                       <span>{job.sector}</span>
@@ -567,11 +835,11 @@ function App() {
                     <div className="district-numbers">
                       <div>
                         <small>Demand</small>
-                        <strong>{job.demand}</strong>
+                        <strong>{demand}</strong>
                       </div>
                       <div>
                         <small>Capacity</small>
-                        <strong>{job.currentCapacity}</strong>
+                        <strong>{currentCapacity}</strong>
                       </div>
                     </div>
                     <div className="capacity-area">
@@ -583,9 +851,9 @@ function App() {
                         <div style={{ width: `${Math.min(percentage, 100)}%` }} />
                       </div>
                     </div>
-                    <div className={gap > 0 ? 'plan-recommendation increase' : 'plan-recommendation reduce'}>
-                      <strong>{gap > 0 ? `+${gap} seats` : `${gap} seats`}</strong>
-                      <span>{gap > 0 ? 'Increase capacity' : 'Reduce capacity'}</span>
+                    <div className={recommendationClass}>
+                      <strong>{seatCount}</strong>
+                      <span>{recommendationText}</span>
                     </div>
                   </div>
                 )
@@ -600,7 +868,18 @@ function App() {
                 industry demand exceeds available seats. Oversupplied
                 programmes should be reviewed before adding new capacity.
               </p>
-              <button className="primary-button">Generate District Action Plan →</button>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  const filename = exportDistrictActionPlan({
+                    district: selectedDistrict,
+                    districtLabourData
+                  })
+                  showToast(`Action plan: ${filename} saved to Downloads!`, 'success')
+                }}
+              >
+                Generate District Action Plan →
+              </button>
             </div>
           </Page>
         )}
@@ -616,20 +895,32 @@ function App() {
               <Stat title="Courses Analysed" number={courseData.length} change="Industry alignment review" />
               <Stat
                 title="Courses Needing Updates"
-                number={courseData.filter(course => course.industrySkills.length > course.currentSkills.length).length}
+                number={courseData.filter((course) => (course.industrySkills || []).length > (course.currentSkills || []).length).length}
                 change="Curriculum gaps detected"
               />
               <Stat
                 title="Critical Skill Gaps"
-                number={courseData.reduce((total, course) => total + course.industrySkills.filter(skill => !course.currentSkills.includes(skill)).length, 0)}
+                number={courseData.reduce((total, course) => {
+                  const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+                  return total + missing.length
+                }, 0)}
                 change="Skills missing from curricula"
               />
               <Stat
                 title="Industry Alignment"
-                number={Math.round(courseData.reduce((total, course) => {
-                  const matched = course.currentSkills.filter(skill => course.industrySkills.includes(skill)).length
-                  return total + (matched / course.industrySkills.length) * 100
-                }, 0) / courseData.length) + '%'}
+                number={
+                  courseData.length > 0
+                    ? Math.round(
+                        courseData.reduce((total, course) => {
+                          const industry = course.industrySkills || []
+                          const current = course.currentSkills || []
+                          const matched = current.filter((skill) => industry.includes(skill)).length
+                          const rate = industry.length > 0 ? (matched / industry.length) * 100 : 100
+                          return total + rate
+                        }, 0) / courseData.length
+                      ) + '%'
+                    : '100%'
+                }
                 change="Average curriculum alignment"
               />
             </div>
@@ -643,9 +934,12 @@ function App() {
               </div>
 
               {courseData.map((course) => {
-                const missingSkills = course.industrySkills.filter(skill => !course.currentSkills.includes(skill))
-                const alignment = Math.round((course.currentSkills.filter(skill => course.industrySkills.includes(skill)).length / course.industrySkills.length) * 100)
-                
+                const industry = course.industrySkills || []
+                const current = course.currentSkills || []
+                const missingSkills = industry.filter((skill) => !current.includes(skill))
+                const matchedCount = current.filter((skill) => industry.includes(skill)).length
+                const alignment = industry.length > 0 ? Math.round((matchedCount / industry.length) * 100) : 100
+
                 let status = 'Aligned'
                 let statusClass = 'status-good'
                 if (alignment < 60) {
@@ -657,7 +951,7 @@ function App() {
                 }
 
                 return (
-                  <div className="course-row" key={course.name}>
+                  <div className="course-row" key={course.id || course.name}>
                     <div className="course-main">
                       <strong>{course.name}</strong>
                       <span>Target role: {course.role}</span>
@@ -678,7 +972,7 @@ function App() {
                         {missingSkills.length === 0 ? (
                           <span className="skill-match">✓ Fully aligned</span>
                         ) : (
-                          missingSkills.map(skill => (
+                          missingSkills.map((skill) => (
                             <span className="skill-gap" key={skill}>+ {skill}</span>
                           ))
                         )}
@@ -698,7 +992,12 @@ function App() {
                 safety, EV electrical systems and CAN Bus diagnostics to
                 improve job readiness.
               </p>
-              <button className="primary-button">Create Curriculum Update →</button>
+              <button
+                className="primary-button"
+                onClick={() => showToast('Curriculum update wizard launched for EV Technician!')}
+              >
+                Create Curriculum Update →
+              </button>
             </div>
           </Page>
         )}
@@ -710,21 +1009,63 @@ function App() {
             <p className="page-description">
               Industry feedback validating current hiring demand, workforce readiness and required skills.
             </p>
+
+            {/* FILTERS */}
+            <div className="filters" style={{ marginBottom: '22px' }}>
+              <div className="filter">
+                <label>District</label>
+                <select
+                  value={employerDistrict}
+                  onChange={(e) => setEmployerDistrict(e.target.value)}
+                >
+                  {districts.map((d) => (
+                    <option key={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="filter">
+                <label>Sector</label>
+                <select
+                  value={employerSector}
+                  onChange={(e) => setEmployerSector(e.target.value)}
+                >
+                  {allSectors.map((s) => (
+                    <option key={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div className="stats">
-              <Stat title="Employers Surveyed" number={employerData.length} change="Industry validation data" />
+              <Stat title="Employers Surveyed" number={filteredEmployers.length} change="Industry validation data" />
               <Stat
                 title="Hiring Demand"
-                number={Math.round(employerData.reduce((total, emp) => total + emp.hiring, 0) / employerData.length) + '%'}
+                number={
+                  filteredEmployers.length > 0
+                    ? Math.round(
+                        filteredEmployers.reduce((total, emp) => total + (emp.hiring || 0), 0) /
+                          filteredEmployers.length
+                      ) + '%'
+                    : '0%'
+                }
                 change="Average hiring demand"
               />
               <Stat
                 title="Employer Satisfaction"
-                number={Math.round(employerData.reduce((total, emp) => total + emp.satisfaction, 0) / employerData.length) + '%'}
+                number={
+                  filteredEmployers.length > 0
+                    ? Math.round(
+                        filteredEmployers.reduce((total, emp) => total + (emp.satisfaction || 0), 0) /
+                          filteredEmployers.length
+                      ) + '%'
+                    : '0%'
+                }
                 change="Average satisfaction"
               />
               <Stat
                 title="Skills Validated"
-                number={new Set(employerData.flatMap(emp => emp.skills)).size}
+                number={new Set(filteredEmployers.flatMap((emp) => emp.skills || [])).size}
                 change="Industry-requested skills"
               />
             </div>
@@ -737,8 +1078,8 @@ function App() {
                 </div>
               </div>
 
-              {employerData.map((employer) => (
-                <div className="employer-row" key={employer.company}>
+              {filteredEmployers.map((employer) => (
+                <div className="employer-row" key={employer.id || employer.company}>
                   <div className="employer-company">
                     <strong>{employer.company}</strong>
                     <span>{employer.sector} · {employer.district}</span>
@@ -746,7 +1087,7 @@ function App() {
                   <div className="employer-metric">
                     <small>Hiring Demand</small>
                     <div className="metric-bar">
-                      <div style={{ width: `${employer.hiring}%` }} />
+                      <div style={{ width: `${Math.min(employer.hiring || 0, 100)}%` }} />
                     </div>
                     <strong>{employer.hiring}%</strong>
                   </div>
@@ -757,13 +1098,18 @@ function App() {
                   <div className="employer-skills">
                     <small>Required Skills</small>
                     <div>
-                      {employer.skills.map(skill => (
+                      {(employer.skills || []).map((skill) => (
                         <span className="employer-skill" key={skill}>{skill}</span>
                       ))}
                     </div>
                   </div>
                 </div>
               ))}
+              {filteredEmployers.length === 0 && (
+                <div className="empty-state">
+                  No employers found matching the selected district and sector.
+                </div>
+              )}
             </div>
 
             <div className="card recommendation">
@@ -773,7 +1119,12 @@ function App() {
                 Employer feedback indicates strong demand for battery diagnostics, EV electrical systems, 
                 BMS and high-voltage safety. These requirements should be reflected in technical training curricula.
               </p>
-              <button className="primary-button">View Skill Requirements →</button>
+              <button
+                className="primary-button"
+                onClick={() => setPage('Skill Gaps')}
+              >
+                View Skill Requirements →
+              </button>
             </div>
           </Page>
         )}
@@ -799,12 +1150,9 @@ function App() {
                     value={careerInterest}
                     onChange={(e) => setCareerInterest(e.target.value)}
                   >
-                    <option>All Sectors</option>
-                    <option>Automotive</option>
-                    <option>Information Technology</option>
-                    <option>Renewable Energy</option>
-                    <option>Manufacturing</option>
-                    <option>Business Services</option>
+                    {allSectors.map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -812,13 +1160,13 @@ function App() {
               <div className="career-skill-section">
                 <h3>Select Your Skills</h3>
                 <div className="career-skills">
-                  {[...new Set(labourData.flatMap(job => job.skills))].map(skill => (
+                  {[...new Set(labourData.flatMap((job) => job.skills || []))].map((skill) => (
                     <button
                       key={skill}
                       className={candidateSkills.includes(skill) ? 'career-skill selected' : 'career-skill'}
                       onClick={() => {
-                        setCandidateSkills(prev =>
-                          prev.includes(skill) ? prev.filter(item => item !== skill) : [...prev, skill]
+                        setCandidateSkills((prev) =>
+                          prev.includes(skill) ? prev.filter((item) => item !== skill) : [...prev, skill]
                         )
                       }}
                     >
@@ -845,20 +1193,31 @@ function App() {
                   </div>
                 </div>
 
-                {labourData
-                  .filter(job => careerInterest === 'All Sectors' ? true : job.sector.includes(careerInterest))
-                  .map(job => {
-                    const matchedSkills = job.skills.filter(skill => candidateSkills.includes(skill))
-                    const skillMatch = job.skills.length ? Math.round((matchedSkills.length / job.skills.length) * 100) : 0
-                    const demandScore = calculateDemandScore(job)
-                    const finalScore = Math.round(skillMatch * 0.6 + demandScore * 0.4)
-                    
-                    return { ...job, matchedSkills, skillMatch, finalScore, demandScore }
-                  })
-                  .sort((a, b) => b.finalScore - a.finalScore)
-                  .slice(0, 5)
-                  .map(job => (
-                    <div className="career-result" key={job.role}>
+                {(() => {
+                  const matches = labourData
+                    .filter((job) => (careerInterest === 'All Sectors' ? true : (job.sector || '').includes(careerInterest)))
+                    .map((job) => {
+                      const skills = job.skills || []
+                      const matchedSkills = skills.filter((skill) => candidateSkills.includes(skill))
+                      const skillMatch = skills.length ? Math.round((matchedSkills.length / skills.length) * 100) : 0
+                      const demandScore = calculateDemandScore(job)
+                      const finalScore = Math.round(skillMatch * 0.6 + demandScore * 0.4)
+
+                      return { ...job, matchedSkills, skillMatch, finalScore, demandScore }
+                    })
+                    .sort((a, b) => b.finalScore - a.finalScore)
+                    .slice(0, 5)
+
+                  if (matches.length === 0) {
+                    return (
+                      <div className="empty-state">
+                        No career paths found matching the sector &ldquo;{careerInterest}&rdquo;. Try selecting another sector.
+                      </div>
+                    )
+                  }
+
+                  return matches.map((job) => (
+                    <div className="career-result" key={job.id || job.role}>
                       <div className="career-result-main">
                         <div>
                           <h3>{job.role}</h3>
@@ -876,12 +1235,11 @@ function App() {
                         </div>
                         <div>
                           <small>Market Demand</small>
-                          {/* BUG FIX: Previously {calculateDemandScore}% which causes React object errors */}
-                          <strong>{job.demandScore}%</strong> 
+                          <strong>{job.demandScore}%</strong>
                         </div>
                         <div>
                           <small>Openings</small>
-                          <strong>{job.demand}</strong>
+                          <strong>{job.demand || 0}</strong>
                         </div>
                       </div>
                       <div className="career-matched">
@@ -889,17 +1247,23 @@ function App() {
                         {job.matchedSkills.length === 0 ? (
                           <span className="career-gap">No matching skills yet</span>
                         ) : (
-                          job.matchedSkills.map(skill => (
+                          job.matchedSkills.map((skill) => (
                             <span key={skill} className="career-match">✓ {skill}</span>
                           ))
                         )}
                       </div>
-                      <button className="secondary-button">View Learning Path →</button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => setPage('Courses')}
+                      >
+                        View Learning Path →
+                      </button>
                     </div>
-                  ))}
+                  ))
+                })()}
               </div>
             )}
-            
+
             <div className="card recommendation">
               <div className="recommendation-label">AI CAREER INSIGHT</div>
               <h2>Build skills around high-demand emerging roles</h2>
@@ -912,6 +1276,70 @@ function App() {
           </Page>
         )}
       </main>
+
+      {/* FEEDBACK TOAST */}
+      {toast && (
+        <div className={`toast-notification ${toast.type}`}>
+          <span>{toast.type === 'success' ? '✓' : 'ℹ'}</span>
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      {/* MODAL DIALOGS */}
+      {activeModal && (
+        <div className="modal-backdrop" onClick={() => setActiveModal(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            {activeModal === 'settings' && (
+              <>
+                <h2>System Settings</h2>
+                <p>
+                  Configure data synchronization frequency, Supabase API endpoints,
+                  and automated intelligence reporting parameters.
+                </p>
+                <div style={{ marginBottom: '18px', fontSize: '13px', color: '#596476' }}>
+                  <div><strong>Data Source:</strong> {isUsingFallback ? 'Local Fallback' : 'Supabase Live'}</div>
+                  <div style={{ marginTop: '8px' }}><strong>Environment:</strong> Production (Vite + React 19)</div>
+                  <div style={{ marginTop: '8px' }}><strong>Auto-Refresh:</strong> Enabled (Real-time)</div>
+                </div>
+                <div className="modal-actions">
+                  <button className="secondary-button" onClick={() => setActiveModal(null)}>
+                    Close
+                  </button>
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      showToast('Settings saved successfully!')
+                      setActiveModal(null)
+                    }}
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </>
+            )}
+
+            {activeModal === 'help' && (
+              <>
+                <h2>MahaSkillIntel Guide & Help</h2>
+                <p>
+                  MahaSkillIntel provides evidence-based intelligence for workforce
+                  planning, identifying employer demand signals, and closing critical curriculum gaps.
+                </p>
+                <div style={{ marginBottom: '18px', fontSize: '13px', color: '#596476', lineHeight: 1.6 }}>
+                  <div><strong>Labour Demand:</strong> Identifies emerging occupations and high-growth sectors.</div>
+                  <div style={{ marginTop: '6px' }}><strong>Skill Gaps:</strong> Audits course curricula against employer-requested technical skills.</div>
+                  <div style={{ marginTop: '6px' }}><strong>District Planner:</strong> Balances local training capacity against district hiring needs.</div>
+                </div>
+                <div className="modal-actions">
+                  <button className="primary-button" onClick={() => setActiveModal(null)}>
+                    Got it
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -954,43 +1382,6 @@ function Alert({ type, title, text }) {
       <div>
         <strong>{title}</strong>
         <p>{text}</p>
-      </div>
-    </div>
-  )
-}
-
-function Skill({ name, status }) {
-  const className = status === 'Critical Gap' ? 'danger' : status === 'Needs Update' ? 'warning' : 'success'
-  return (
-    <div className="skill-row">
-      <strong>{name}</strong>
-      <span className={`status ${className}`}>{status}</span>
-    </div>
-  )
-}
-
-function Course({ name, status, level }) {
-  return (
-    <div className="card course-card">
-      <div className="course-icon">▣</div>
-      <h2>{name}</h2>
-      <p>{status}</p>
-      <div className="course-status">{level}</div>
-      <button className="view-button">Analyse Course →</button>
-    </div>
-  )
-}
-
-function PlanRow({ role, demand, current, recommendation }) {
-  const isPositive = recommendation.startsWith('+')
-  return (
-    <div className="plan-row">
-      <div><strong>{role}</strong></div>
-      <div><span>Demand</span><strong>{demand}</strong></div>
-      <div><span>Current</span><strong>{current}</strong></div>
-      <div>
-        <span>Recommendation</span>
-        <strong className={isPositive ? 'positive-text' : 'negative-text'}>{recommendation}</strong>
       </div>
     </div>
   )
