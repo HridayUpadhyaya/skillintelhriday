@@ -1418,3 +1418,88 @@ nav {
 .executive-insight {
   margin-top: 0;
 }
+/* MODAL */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+
+.modal-card {
+  position: relative;
+  background: white;
+  border-radius: 14px;
+  padding: 32px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(16, 24, 40, 0.25);
+}
+
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #f1f4f8;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: #455065;
+}
+
+.modal-close:hover {
+  background: #e5eaf0;
+}
+
+.modal-section {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid #edf0f4;
+  font-size: 13px;
+}
+
+.modal-section strong {
+  color: #172033;
+}
+
+.modal-section span {
+  color: #697386;
+}
+
+.modal-list p {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #455065;
+  line-height: 1.6;
+}
+
+/* TOAST */
+.toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #172033;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.25);
+  z-index: 1100;
+}
+
+/* Buttons should always show a pointer cursor by default */
+button {
+  cursor: pointer;
+}
