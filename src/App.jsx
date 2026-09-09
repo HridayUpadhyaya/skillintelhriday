@@ -39,11 +39,58 @@ function App() {
   const [toast, setToast] = useState(null)
   const [activeModal, setActiveModal] = useState(null)
 
+  // Curriculum Update Wizard state
+  // wizard = { course, missingSkills, selected, step } | null
+  const [wizard, setWizard] = useState(null)
+
   function showToast(message, type = 'success') {
     setToast({ message, type })
     setTimeout(() => {
       setToast((prev) => (prev?.message === message ? null : prev))
     }, 3200)
+  }
+
+  function openCurriculumWizard(course, missingSkills) {
+    setWizard({
+      course,
+      missingSkills,
+      selected: missingSkills,
+      step: 1
+    })
+  }
+
+  function toggleWizardSkill(skill) {
+    setWizard((prev) => {
+      if (!prev) return prev
+      const alreadySelected = prev.selected.includes(skill)
+      return {
+        ...prev,
+        selected: alreadySelected
+          ? prev.selected.filter((s) => s !== skill)
+          : [...prev.selected, skill]
+      }
+    })
+  }
+
+  function applyCurriculumUpdate() {
+    setWizard((prev) => {
+      if (!prev) return prev
+
+      setCourseData((courses) =>
+        courses.map((c) => {
+          const isMatch = prev.course.id ? c.id === prev.course.id : c.name === prev.course.name
+          if (!isMatch) return c
+          const mergedSkills = [...new Set([...(c.currentSkills || []), ...prev.selected])]
+          return { ...c, currentSkills: mergedSkills }
+        })
+      )
+
+      return { ...prev, step: 3 }
+    })
+  }
+
+  function closeWizard() {
+    setWizard(null)
   }
 
   async function handleRetry() {
@@ -205,6 +252,29 @@ function App() {
 
     return alerts
   }, [filteredLabourData, courseData])
+
+  // Resolve the course backing the "EV Technician" AI recommendation card,
+  // falling back to a synthetic course if it isn't present in the dataset yet.
+  const evTechnicianCourse = useMemo(() => {
+    const match = courseData.find((c) => {
+      const haystack = `${c.role || ''} ${c.name || ''}`.toLowerCase()
+      return haystack.includes('ev technician')
+    })
+    if (match) return match
+    return {
+      id: 'ev-technician-fallback',
+      name: 'EV Technician Programme',
+      role: 'EV Technician',
+      industrySkills: ['High-Voltage Safety', 'EV Electrical Systems', 'CAN Bus Diagnostics'],
+      currentSkills: []
+    }
+  }, [courseData])
+
+  const evTechnicianMissingSkills = useMemo(() => {
+    const industry = evTechnicianCourse.industrySkills || []
+    const current = evTechnicianCourse.currentSkills || []
+    return industry.filter((skill) => !current.includes(skill))
+  }, [evTechnicianCourse])
 
   // Filtered employers
   const filteredEmployers = useMemo(() => {
@@ -729,7 +799,7 @@ function App() {
                       </div>
                       <button
                         className="primary-button"
-                        onClick={() => showToast(`Curriculum revision drafted for ${course.name}!`, 'success')}
+                        onClick={() => openCurriculumWizard(course, missingSkills)}
                       >
                         Update Curriculum →
                       </button>
@@ -994,7 +1064,7 @@ function App() {
               </p>
               <button
                 className="primary-button"
-                onClick={() => showToast('Curriculum update wizard launched for EV Technician!')}
+                onClick={() => openCurriculumWizard(evTechnicianCourse, evTechnicianMissingSkills)}
               >
                 Create Curriculum Update →
               </button>
@@ -1333,6 +1403,128 @@ function App() {
                 <div className="modal-actions">
                   <button className="primary-button" onClick={() => setActiveModal(null)}>
                     Got it
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CURRICULUM UPDATE WIZARD */}
+      {wizard && (
+        <div className="modal-backdrop" onClick={closeWizard}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '16px' }}>
+              {[1, 2, 3].map((step) => (
+                <div
+                  key={step}
+                  style={{
+                    flex: 1,
+                    height: '4px',
+                    borderRadius: '2px',
+                    background: wizard.step >= step ? '#2f6feb' : '#e3e7ee'
+                  }}
+                />
+              ))}
+            </div>
+
+            {wizard.step === 1 && (
+              <>
+                <h2>Update Curriculum: {wizard.course.name}</h2>
+                <p>
+                  {wizard.missingSkills.length === 0
+                    ? 'This curriculum already covers every industry-required skill.'
+                    : `Select which of the ${wizard.missingSkills.length} missing skill${wizard.missingSkills.length > 1 ? 's' : ''} to add to this curriculum.`}
+                </p>
+                <div style={{ marginBottom: '18px' }}>
+                  {wizard.missingSkills.length === 0 ? (
+                    <div className="no-gap">✓ Curriculum fully aligned</div>
+                  ) : (
+                    wizard.missingSkills.map((skill) => (
+                      <label
+                        key={skill}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '10px 12px',
+                          border: '1px solid #e3e7ee',
+                          borderRadius: '8px',
+                          marginBottom: '8px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={wizard.selected.includes(skill)}
+                          onChange={() => toggleWizardSkill(skill)}
+                        />
+                        <span>{skill}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+                <div className="modal-actions">
+                  <button className="secondary-button" onClick={closeWizard}>
+                    Cancel
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={wizard.missingSkills.length > 0 && wizard.selected.length === 0}
+                    onClick={() => setWizard((prev) => ({ ...prev, step: 2 }))}
+                  >
+                    Next →
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizard.step === 2 && (
+              <>
+                <h2>Confirm Update</h2>
+                <p>
+                  The following skill{wizard.selected.length !== 1 ? 's' : ''} will be added to{' '}
+                  <strong>{wizard.course.name}</strong>
+                  {wizard.course.role ? ` (target role: ${wizard.course.role})` : ''}:
+                </p>
+                <div style={{ marginBottom: '18px' }}>
+                  {wizard.selected.length === 0 ? (
+                    <p style={{ color: '#8992a2', fontSize: '13px' }}>No skills selected — no changes will be made.</p>
+                  ) : (
+                    wizard.selected.map((skill) => (
+                      <div className="missing-skill" key={skill}>+ {skill}</div>
+                    ))
+                  )}
+                </div>
+                <div className="modal-actions">
+                  <button className="secondary-button" onClick={() => setWizard((prev) => ({ ...prev, step: 1 }))}>
+                    ← Back
+                  </button>
+                  <button className="primary-button" onClick={applyCurriculumUpdate}>
+                    Apply Update
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizard.step === 3 && (
+              <>
+                <h2>✓ Curriculum Updated</h2>
+                <p>
+                  {wizard.selected.length > 0
+                    ? `${wizard.selected.length} skill${wizard.selected.length > 1 ? 's have' : ' has'} been added to ${wizard.course.name}. Industry alignment for this course has improved.`
+                    : `No changes were made to ${wizard.course.name}.`}
+                </p>
+                <div className="modal-actions">
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      closeWizard()
+                      showToast(`Curriculum updated for ${wizard.course.name}!`, 'success')
+                    }}
+                  >
+                    Done
                   </button>
                 </div>
               </>
