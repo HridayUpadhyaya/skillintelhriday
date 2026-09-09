@@ -213,8 +213,20 @@ function App() {
         </nav>
 
         <div className="sidebar-bottom">
-          <div className="nav-item">Settings</div>
-          <div className="nav-item">Help</div>
+          <button
+            type="button"
+            className="nav-item sidebar-action"
+            onClick={() => openModal('settings')}
+          >
+            Settings
+          </button>
+          <button
+            type="button"
+            className="nav-item sidebar-action"
+            onClick={() => openModal('help')}
+          >
+            Help
+          </button>
         </div>
       </aside>
 
@@ -272,7 +284,7 @@ function App() {
                 </select>
               </div>
 
-              <button className="update-button" onClick={() => alert('Report exporting...')}>
+              <button className="update-button" onClick={exportLabourReport}>
                 Export Report
               </button>
             </div>
@@ -384,9 +396,54 @@ function App() {
                     <p>Issues requiring attention</p>
                   </div>
                 </div>
-                <Alert type="danger" title="Data Entry Operator" text="Course appears oversupplied" />
-                <Alert type="warning" title="EV Technician" text="4 critical curriculum gaps detected" />
-                <Alert type="success" title="Solar Technician" text="Strong demand growth detected" />
+                {(() => {
+                  const alerts = [
+                    ...filteredLabourData
+                      .filter((job) => job.currentCapacity > job.demand)
+                      .sort((a, b) => (b.currentCapacity - b.demand) - (a.currentCapacity - a.demand))
+                      .slice(0, 1)
+                      .map((job) => ({
+                        type: 'danger',
+                        title: job.role,
+                        text: `Capacity exceeds demand by ${job.currentCapacity - job.demand} seats`
+                      })),
+                    ...filteredLabourData
+                      .filter((job) => job.demand > job.currentCapacity && job.growth >= 10)
+                      .sort((a, b) => b.growth - a.growth)
+                      .slice(0, 1)
+                      .map((job) => ({
+                        type: 'success',
+                        title: job.role,
+                        text: `Strong demand growth detected at +${job.growth}%`
+                      })),
+                    ...courseData
+                      .map((course) => ({
+                        course,
+                        missing: course.industrySkills.filter(
+                          (skill) => !course.currentSkills.includes(skill)
+                        )
+                      }))
+                      .filter((item) => item.missing.length >= 2)
+                      .sort((a, b) => b.missing.length - a.missing.length)
+                      .slice(0, 1)
+                      .map((item) => ({
+                        type: 'warning',
+                        title: item.course.name,
+                        text: `${item.missing.length} curriculum skill gaps detected`
+                      }))
+                  ]
+
+                  return alerts.length ? alerts.map((alert) => (
+                    <Alert
+                      key={`${alert.type}-${alert.title}`}
+                      type={alert.type}
+                      title={alert.title}
+                      text={alert.text}
+                    />
+                  )) : (
+                    <div className="empty-state">No priority alerts for the current data.</div>
+                  )
+                })()}
               </div>
             </section>
 
@@ -400,12 +457,17 @@ function App() {
                   </div>
                 </div>
                 <div className="skill-tags">
-                  <span>Battery Diagnostics</span>
-                  <span>AI / ML</span>
-                  <span>Data Analytics</span>
-                  <span>BMS</span>
-                  <span>EV Charging</span>
-                  <span>Solar Installation</span>
+                  {[
+                    ...new Set(filteredLabourData.flatMap((job) => job.skills))
+                  ]
+                    .sort((a, b) => a.localeCompare(b))
+                    .slice(0, 12)
+                    .map((skill) => (
+                      <span key={skill}>{skill}</span>
+                    ))}
+                  {!filteredLabourData.some((job) => job.skills.length) && (
+                    <span>No skills available.</span>
+                  )}
                 </div>
               </div>
 
@@ -622,7 +684,7 @@ function App() {
                   <option>Nagpur</option>
                 </select>
               </div>
-              <button className="update-button" onClick={() => alert('Plan Generated!')}>
+              <button className="update-button" onClick={generateDistrictPlan}>
                 Generate Training Plan
               </button>
             </div>
@@ -660,7 +722,9 @@ function App() {
 
               {labourData.map(job => {
                 const gap = job.demand - job.currentCapacity
-                const percentage = Math.round((job.currentCapacity / job.demand) * 100)
+                const percentage = job.demand > 0
+                  ? Math.round((job.currentCapacity / job.demand) * 100)
+                  : job.currentCapacity > 0 ? 100 : 0
 
                 return (
                   <div className="district-plan-row" key={job.role}>
@@ -1047,12 +1111,68 @@ function App() {
           </Page>
         )}
 
-        {toast && <div className="toast">{toast}</div>}
+        {toast && (
+          <div
+            className="toast"
+            style={{
+              position: 'fixed',
+              right: 24,
+              bottom: 24,
+              zIndex: 1001,
+              padding: '12px 16px',
+              borderRadius: 10,
+              background: '#111827',
+              color: '#fff',
+              boxShadow: '0 10px 30px rgba(0,0,0,.2)'
+            }}
+          >
+            {toast}
+          </div>
+        )}
 
         {modal && (
-          <div className="modal-backdrop" onClick={closeModal}>
-            <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-              <button className="modal-close" onClick={closeModal} aria-label="Close">×</button>
+          <div
+            className="modal-backdrop"
+            onClick={closeModal}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 1000,
+              background: 'rgba(15, 23, 42, .55)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 24
+            }}
+          >
+            <div
+              className="modal-card"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                position: 'relative',
+                width: 'min(680px, 100%)',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                background: '#fff',
+                borderRadius: 16,
+                padding: 28,
+                boxShadow: '0 24px 80px rgba(0,0,0,.25)'
+              }}
+            >
+              <button
+                className="modal-close"
+                onClick={closeModal}
+                aria-label="Close"
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  border: 0,
+                  background: 'transparent',
+                  fontSize: 28,
+                  cursor: 'pointer'
+                }}
+              >×</button>
 
               {modal.type === 'settings' && (
                 <>
@@ -1170,7 +1290,13 @@ function App() {
                       </div>
                     )) : <p>You already selected all detected skills for this role.</p>}
                   </div>
-                  <button className="primary-button" onClick={() => showToast('Learning path saved for later.')}>
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      closeModal()
+                      showToast(`Learning path saved for ${modal.job.role}.`)
+                    }}
+                  >
                     Save Learning Path →
                   </button>
                 </>
