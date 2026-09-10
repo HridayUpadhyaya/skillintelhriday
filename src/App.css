@@ -1558,3 +1558,332 @@ nav {
   justify-content: flex-end;
   gap: 10px;
 }
+
+/* ========== NEW STYLES: MahaSkillIntel Improvements ========== */
+
+/* ==========================================================================
+   MahaSkillIntel - Additional Feature Styles
+   Design System:
+     - Primary Blue: #2f6feb
+     - Background: #f0f2f5
+     - Card Background: #fff
+     - Text Dark: #172033
+     - Text Secondary: #596476
+     - Text Muted: #8992a2
+     - Border: #e3e7ee
+     - Font Family: Inter, Arial, sans-serif
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Proficiency Level Badges
+   -------------------------------------------------------------------------- */
+
+.proficiency-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-family: Inter, Arial, sans-serif;
+}
+
+.proficiency-beginner {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.proficiency-intermediate {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+.proficiency-advanced {
+  background: #fce4ec;
+  color: #c62828;
+}
+
+/* --------------------------------------------------------------------------
+   2. Trend Mini Charts
+   -------------------------------------------------------------------------- */
+
+.trend-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 40px;
+  padding: 2px 0;
+}
+
+.trend-bar {
+  width: 12px;
+  border-radius: 3px 3px 0 0;
+  background: #2f6feb;
+  transition: height 0.3s ease, background 0.2s ease;
+  min-height: 4px;
+}
+
+.trend-bar:hover {
+  opacity: 0.85;
+}
+
+.trend-bar.projected {
+  background: #2f6feb55;
+  border: 1px dashed #2f6feb;
+  box-sizing: border-box;
+}
+
+/* --------------------------------------------------------------------------
+   3. Trend Direction Badges
+   -------------------------------------------------------------------------- */
+
+.trend-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-family: Inter, Arial, sans-serif;
+}
+
+.trend-rising {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.trend-stable {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.trend-declining {
+  background: #fce4ec;
+  color: #c62828;
+}
+
+/* --------------------------------------------------------------------------
+   4. Resource Requirements Section (for District Plans)
+   -------------------------------------------------------------------------- */
+
+.resource-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e3e7ee;
+}
+
+.resource-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #172033;
+  margin-bottom: 12px;
+}
+
+.resource-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.resource-card {
+  background: #f7f8fa;
+  border: 1px solid #e3e7ee;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.resource-card h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #172033;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.equipment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.equipment-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #eef3fb;
+  color: #2f6feb;
+  border: 1px solid #d4e2fa;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.trainer-gap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trainer-gap-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #596476;
+}
+
+.trainer-gap-label strong {
+  font-size: 11px;
+  color: #172033;
+}
+
+.trainer-gap-bar {
+  height: 7px;
+  background: #edf0f4;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.trainer-gap-bar div {
+  height: 100%;
+  background: #2f6feb;
+  border-radius: 10px;
+  transition: width 0.3s ease;
+}
+
+.trainer-gap-bar div.critical {
+  background: #c62828;
+}
+
+.trainer-gap-bar div.moderate {
+  background: #ef6c00;
+}
+
+.trainer-gap-bar div.low {
+  background: #2e7d32;
+}
+
+/* --------------------------------------------------------------------------
+   5. Enhanced Career Advisor
+   -------------------------------------------------------------------------- */
+
+.career-education-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 20px;
+}
+
+.career-education-section label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #596476;
+}
+
+.career-education-section select {
+  border: 1px solid #e3e7ee;
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #172033;
+  outline: none;
+  cursor: pointer;
+  width: 100%;
+  max-width: 380px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.career-education-section select:focus {
+  border-color: #2f6feb;
+  box-shadow: 0 0 0 2px rgba(47, 111, 235, 0.12);
+}
+
+.salary-range {
+  font-size: 13px;
+  font-weight: 600;
+  color: #159675;
+}
+
+.salary-range small {
+  display: block;
+  font-size: 10px;
+  color: #8992a2;
+  margin-bottom: 4px;
+  font-weight: 400;
+}
+
+.salary-range strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #159675;
+}
+
+.training-duration {
+  font-size: 13px;
+  font-weight: 500;
+  color: #596476;
+}
+
+.training-duration small {
+  display: block;
+  font-size: 10px;
+  color: #8992a2;
+  margin-bottom: 4px;
+  font-weight: 400;
+}
+
+.training-duration strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #172033;
+}
+
+/* --------------------------------------------------------------------------
+   6. Forecast Column in District Plans
+   -------------------------------------------------------------------------- */
+
+.forecast-column {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 110px;
+}
+
+.forecast-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #2f6feb;
+}
+
+.forecast-label {
+  font-size: 11px;
+  color: #8992a2;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Adjustments for New Components
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .resource-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .career-education-section select {
+    max-width: 100%;
+  }
+}
+
