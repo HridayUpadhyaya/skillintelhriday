@@ -11,7 +11,14 @@ import {
   exportDistrictActionPlan,
   labourData as mockLabourData,
   courseData as mockCourseData,
-  employerData as mockEmployerData
+  employerData as mockEmployerData,
+  PROFICIENCY_LEVELS,
+  getSkillNames,
+  getSkillsByLevel,
+  fuzzySkillMatch,
+  findMatchingSkills,
+  calculateForecast,
+  getTrendDirection
 } from './api'
 
 const DEFAULT_DISTRICTS = ['All Districts', 'Pune', 'Mumbai', 'Nashik', 'Nagpur']
@@ -31,16 +38,22 @@ function App() {
   const [employerSector, setEmployerSector] = useState('All Sectors')
   const [employerDistrict, setEmployerDistrict] = useState('All Districts')
   const [page, setPage] = useState('Dashboard')
+  
+  // Skill Gaps Filters
+  const [skillGapsProficiency, setSkillGapsProficiency] = useState('All Levels')
+
+  // Career Advisor State
   const [careerInterest, setCareerInterest] = useState('All Sectors')
   const [candidateSkills, setCandidateSkills] = useState([])
   const [showCareerResults, setShowCareerResults] = useState(false)
+  const [educationLevel, setEducationLevel] = useState('10th Pass')
+  const [experienceLevel, setExperienceLevel] = useState('Fresher')
 
   // Notification Toast & Modal states
   const [toast, setToast] = useState(null)
   const [activeModal, setActiveModal] = useState(null)
 
   // Curriculum Update Wizard state
-  // wizard = { course, missingSkills, selected, step } | null
   const [wizard, setWizard] = useState(null)
 
   function showToast(message, type = 'success') {
@@ -80,7 +93,10 @@ function App() {
         courses.map((c) => {
           const isMatch = prev.course.id ? c.id === prev.course.id : c.name === prev.course.name
           if (!isMatch) return c
-          const mergedSkills = [...new Set([...(c.currentSkills || []), ...prev.selected])]
+          // Map string selection back to skill objects if needed, but the current structure expects strings for currentSkills. 
+          // We will store just the names since that's what the original code did.
+          const currentStrings = getSkillNames(c.currentSkills || [])
+          const mergedSkills = [...new Set([...currentStrings, ...prev.selected])].map(name => ({name, level: 'Beginner'}))
           return { ...c, currentSkills: mergedSkills }
         })
       )
@@ -161,19 +177,16 @@ function App() {
   }, [])
 
 
-  // Dynamic sectors list extracted from data
   const allSectors = useMemo(() => {
     const sectors = new Set(['All Sectors'])
     labourData.forEach((job) => {
       if (job.sector) {
-        // Split combined sectors like "Automotive / Energy" if helpful or add directly
         sectors.add(job.sector)
       }
     })
     return Array.from(sectors)
   }, [labourData])
 
-  // Dynamic filtering based on sector and district
   const filteredLabourData = useMemo(() => {
     return labourData
       .filter((job) => {
@@ -183,11 +196,10 @@ function App() {
       .map((job) => getJobForDistrict(job, selectedDistrict))
   }, [labourData, selectedSector, selectedDistrict])
 
-  // Top skills derived dynamically from filtered labour data
   const topDemandSkills = useMemo(() => {
     const countMap = {}
     filteredLabourData.forEach((job) => {
-      ;(job.skills || []).forEach((skill) => {
+      getSkillNames(job.skills || []).forEach((skill) => {
         countMap[skill] = (countMap[skill] || 0) + 1
       })
     })
@@ -195,11 +207,9 @@ function App() {
     return sorted.slice(0, 6)
   }, [filteredLabourData])
 
-  // Dynamic priority alerts for the dashboard
   const dynamicAlerts = useMemo(() => {
     const alerts = []
-    // 1. Check for oversupplied role
-    const oversupplied = filteredLabourData.find((job) => job.currentCapacity > job.demand)
+    const oversupplied = filteredLabourData.find((job) => (job.currentCapacity || 0) > (job.demand || 0))
     if (oversupplied) {
       alerts.push({
         type: 'danger',
@@ -214,13 +224,16 @@ function App() {
       })
     }
 
-    // 2. Check for critical curriculum gap in courses
     const gapCourse = courseData.find((course) => {
-      const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+      const industry = getSkillNames(course.industrySkills || [])
+      const current = getSkillNames(course.currentSkills || [])
+      const missing = industry.filter((s) => !current.includes(s))
       return missing.length >= 2
     })
     if (gapCourse) {
-      const missingCount = (gapCourse.industrySkills || []).filter((s) => !(gapCourse.currentSkills || []).includes(s)).length
+      const industry = getSkillNames(gapCourse.industrySkills || [])
+      const current = getSkillNames(gapCourse.currentSkills || [])
+      const missingCount = industry.filter((s) => !current.includes(s)).length
       alerts.push({
         type: 'warning',
         title: gapCourse.name,
@@ -234,7 +247,6 @@ function App() {
       })
     }
 
-    // 3. Check for high growth role
     const highGrowth = [...filteredLabourData].sort((a, b) => (b.growth || 0) - (a.growth || 0))[0]
     if (highGrowth && highGrowth.growth > 0) {
       alerts.push({
@@ -253,30 +265,64 @@ function App() {
     return alerts
   }, [filteredLabourData, courseData])
 
-  // Resolve the course backing the "EV Technician" AI recommendation card,
-  // falling back to a synthetic course if it isn't present in the dataset yet.
-  const evTechnicianCourse = useMemo(() => {
-    const match = courseData.find((c) => {
-      const haystack = `${c.role || ''} ${c.name || ''}`.toLowerCase()
-      return haystack.includes('ev technician')
-    })
-    if (match) return match
+  // Dashboard AI Recommendation
+  const dashboardRecommendation = useMemo(() => {
+    if (filteredLabourData.length === 0) return null
+    const undersupplied = [...filteredLabourData].sort((a, b) => 
+      ((b.demand || 0) - (b.currentCapacity || 0)) - ((a.demand || 0) - (a.currentCapacity || 0))
+    )[0]
+    if (!undersupplied || (undersupplied.demand || 0) <= (undersupplied.currentCapacity || 0)) return null
     return {
-      id: 'ev-technician-fallback',
-      name: 'EV Technician Programme',
-      role: 'EV Technician',
-      industrySkills: ['High-Voltage Safety', 'EV Electrical Systems', 'CAN Bus Diagnostics'],
-      currentSkills: []
+      title: `Increase ${undersupplied.role} training capacity`,
+      text: `Industry demand for ${undersupplied.role} in ${undersupplied.sector} is growing while current training capacity remains below projected requirements.`
+    }
+  }, [filteredLabourData])
+
+  // Courses AI Recommendation
+  const courseRecommendation = useMemo(() => {
+    if (courseData.length === 0) return null
+    const coursesWithAlignment = courseData.map(course => {
+      const industry = getSkillNames(course.industrySkills || [])
+      const current = getSkillNames(course.currentSkills || [])
+      const missingSkills = industry.filter(skill => !current.includes(skill))
+      const alignment = industry.length > 0 ? Math.round(((industry.length - missingSkills.length) / industry.length) * 100) : 100
+      return { course, alignment, missingSkills }
+    }).sort((a, b) => a.alignment - b.alignment)
+    
+    const lowest = coursesWithAlignment[0]
+    if (lowest.alignment === 100 || lowest.missingSkills.length === 0) return null
+    return {
+      course: lowest.course,
+      missingSkills: lowest.missingSkills,
+      title: `Prioritise ${lowest.course.name} curriculum revision`,
+      text: `Industry requirements currently exceed the skills covered by the existing ${lowest.course.name} curriculum. Add ${lowest.missingSkills.slice(0, 3).join(', ')} to improve job readiness.`
     }
   }, [courseData])
 
-  const evTechnicianMissingSkills = useMemo(() => {
-    const industry = evTechnicianCourse.industrySkills || []
-    const current = evTechnicianCourse.currentSkills || []
-    return industry.filter((skill) => !current.includes(skill))
-  }, [evTechnicianCourse])
+  // Employers AI Recommendation
+  const employerRecommendation = useMemo(() => {
+    if (employerData.length === 0) return null
+    const filteredEmps = employerData.filter((emp) => {
+      const matchDistrict = employerDistrict === 'All Districts' || emp.district === employerDistrict
+      const matchSector = employerSector === 'All Sectors' || (emp.sector || '').includes(employerSector)
+      return matchDistrict && matchSector
+    })
+    if (filteredEmps.length === 0) return null
+    
+    const skillCounts = {}
+    filteredEmps.forEach(emp => {
+      getSkillNames(emp.skills || []).forEach(skill => {
+        skillCounts[skill] = (skillCounts[skill] || 0) + 1
+      })
+    })
+    const topSkills = Object.entries(skillCounts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(e => e[0])
+    if (topSkills.length === 0) return null
+    return {
+      title: 'Employers are prioritising emerging technical skills',
+      text: `Employer feedback indicates strong demand for ${topSkills.join(', ')}. These requirements should be reflected in technical training curricula.`
+    }
+  }, [employerData, employerDistrict, employerSector])
 
-  // Filtered employers
   const filteredEmployers = useMemo(() => {
     return employerData.filter((emp) => {
       const matchDistrict = employerDistrict === 'All Districts' || emp.district === employerDistrict
@@ -285,10 +331,22 @@ function App() {
     })
   }, [employerData, employerDistrict, employerSector])
 
-  // District plans filtered data with localized demand and capacity
   const districtLabourData = useMemo(() => {
     return labourData.map((job) => getJobForDistrict(job, selectedDistrict))
   }, [labourData, selectedDistrict])
+
+  // District Plans Recommendation
+  const districtRecommendation = useMemo(() => {
+    if (districtLabourData.length === 0) return null
+    const undersupplied = [...districtLabourData].sort((a, b) => 
+      ((b.demand || 0) - (b.currentCapacity || 0)) - ((a.demand || 0) - (a.currentCapacity || 0))
+    )[0]
+    if (!undersupplied || (undersupplied.demand || 0) <= (undersupplied.currentCapacity || 0)) return null
+    return {
+      title: `Prioritise capacity expansion for ${undersupplied.role}`,
+      text: `Training capacity for ${undersupplied.role} should be increased where projected industry demand exceeds available seats. Oversupplied programmes should be reviewed before adding new capacity.`
+    }
+  }, [districtLabourData])
 
   if (loadingData) {
     return (
@@ -320,7 +378,6 @@ function App() {
 
   return (
     <div className="app">
-      {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="logo" onClick={() => setPage('Dashboard')} style={{ cursor: 'pointer' }}>
           MahaSkill<span>Intel</span>
@@ -339,24 +396,16 @@ function App() {
         </nav>
 
         <div className="sidebar-bottom">
-          <div
-            className="nav-item"
-            onClick={() => setActiveModal('settings')}
-          >
+          <div className="nav-item" onClick={() => setActiveModal('settings')}>
             Settings
           </div>
-          <div
-            className="nav-item"
-            onClick={() => setActiveModal('help')}
-          >
+          <div className="nav-item" onClick={() => setActiveModal('help')}>
             Help
           </div>
         </div>
       </aside>
 
-      {/* MAIN */}
       <main className="main">
-        {/* RESILIENCE BANNER */}
         {isUsingFallback && (
           <div className="data-mode-banner">
             <div>
@@ -368,13 +417,10 @@ function App() {
           </div>
         )}
 
-        {/* HEADER */}
         <header className="header">
           <div>
             <h1>{page}</h1>
-            <p>
-              Evidence-based intelligence for smarter workforce development
-            </p>
+            <p>Evidence-based intelligence for smarter workforce development</p>
           </div>
 
           <div className="profile">
@@ -394,17 +440,12 @@ function App() {
           </div>
         </header>
 
-        {/* DASHBOARD */}
         {page === 'Dashboard' && (
           <Page>
-            {/* FILTERS */}
             <div className="filters">
               <div className="filter">
                 <label>District</label>
-                <select
-                  value={selectedDistrict}
-                  onChange={(e) => setSelectedDistrict(e.target.value)}
-                >
+                <select value={selectedDistrict} onChange={(e) => setSelectedDistrict(e.target.value)}>
                   {districts.map((d) => (
                     <option key={d}>{d}</option>
                   ))}
@@ -413,10 +454,7 @@ function App() {
 
               <div className="filter">
                 <label>Sector</label>
-                <select
-                  value={selectedSector}
-                  onChange={(e) => setSelectedSector(e.target.value)}
-                >
+                <select value={selectedSector} onChange={(e) => setSelectedSector(e.target.value)}>
                   {allSectors.map((s) => (
                     <option key={s}>{s}</option>
                   ))}
@@ -438,13 +476,10 @@ function App() {
               </button>
             </div>
 
-            {/* EXECUTIVE INSIGHT */}
             <div className="card executive-insight">
               <div className="executive-icon">✦</div>
               <div className="executive-content">
-                <div className="recommendation-label">
-                  EXECUTIVE MARKET INSIGHT
-                </div>
+                <div className="recommendation-label">EXECUTIVE MARKET INSIGHT</div>
                 <h2>Training capacity should follow emerging industry demand</h2>
                 <p>
                   MahaSkillIntel identifies where employer demand is growing faster
@@ -469,7 +504,6 @@ function App() {
               </div>
             </div>
 
-            {/* STATISTICS */}
             <section className="stats">
               <Stat
                 title="Job Openings"
@@ -478,7 +512,7 @@ function App() {
               />
               <Stat
                 title="High-Demand Skills"
-                number={new Set(filteredLabourData.flatMap((job) => job.skills || [])).size}
+                number={new Set(filteredLabourData.flatMap((job) => getSkillNames(job.skills || []))).size}
                 change="Skills requested by employers"
               />
               <Stat
@@ -493,9 +527,7 @@ function App() {
               />
             </section>
 
-            {/* MAIN GRID */}
             <section className="dashboard-grid">
-              {/* EMERGING ROLES */}
               <div className="card">
                 <div className="card-header">
                   <div>
@@ -534,7 +566,6 @@ function App() {
                 </div>
               </div>
 
-              {/* ALERTS */}
               <div className="card">
                 <div className="card-header">
                   <div>
@@ -553,7 +584,6 @@ function App() {
               </div>
             </section>
 
-            {/* BOTTOM */}
             <section className="bottom-grid">
               <div className="card">
                 <div className="card-header">
@@ -574,20 +604,20 @@ function App() {
 
               <div className="card recommendation">
                 <div className="recommendation-label">AI RECOMMENDATION</div>
-                <h2>Increase EV training capacity</h2>
+                <h2>{dashboardRecommendation ? dashboardRecommendation.title : 'Market Balanced'}</h2>
                 <p>
-                  Industry demand is growing rapidly while current
-                  training capacity remains below projected requirements.
+                  {dashboardRecommendation ? dashboardRecommendation.text : 'Supply and demand are currently well-balanced across training programmes in the selected sector and district.'}
                 </p>
-                <button className="primary-button" onClick={() => setPage('District Plans')}>
-                  View Recommendation →
-                </button>
+                {dashboardRecommendation && (
+                  <button className="primary-button" onClick={() => setPage('District Plans')}>
+                    View Recommendation →
+                  </button>
+                )}
               </div>
             </section>
           </Page>
         )}
 
-        {/* LABOUR DEMAND */}
         {page === 'Labour Demand' && (
           <Page>
             <h2>Labour Market Intelligence</h2>
@@ -598,10 +628,7 @@ function App() {
             <div className="filters" style={{ marginBottom: '22px' }}>
               <div className="filter">
                 <label>District</label>
-                <select
-                  value={selectedDistrict}
-                  onChange={(e) => setSelectedDistrict(e.target.value)}
-                >
+                <select value={selectedDistrict} onChange={(e) => setSelectedDistrict(e.target.value)}>
                   {districts.map((d) => (
                     <option key={d}>{d}</option>
                   ))}
@@ -610,10 +637,7 @@ function App() {
 
               <div className="filter">
                 <label>Sector</label>
-                <select
-                  value={selectedSector}
-                  onChange={(e) => setSelectedSector(e.target.value)}
-                >
+                <select value={selectedSector} onChange={(e) => setSelectedSector(e.target.value)}>
                   {allSectors.map((s) => (
                     <option key={s}>{s}</option>
                   ))}
@@ -629,7 +653,7 @@ function App() {
               />
               <Stat
                 title="High-Demand Skills"
-                number={new Set(filteredLabourData.flatMap((job) => job.skills || [])).size}
+                number={new Set(filteredLabourData.flatMap((job) => getSkillNames(job.skills || []))).size}
                 change="Skills requested by employers"
               />
               <Stat
@@ -688,16 +712,38 @@ function App() {
                       <span>{job.sector}</span>
                     </div>
                     <div>
+                      <small>Trend Forecast</small>
+                      <div className="trend-chart" style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '40px', marginTop: '4px' }}>
+                        {Object.entries(job.trendData || {}).map(([year, value]) => {
+                          const maxVal = Math.max(...Object.values(job.trendData || {}))
+                          const height = maxVal > 0 ? (value / maxVal) * 40 : 0
+                          const isProjected = year.includes('projected')
+                          return (
+                            <div 
+                              key={year} 
+                              className={`trend-bar ${isProjected ? 'projected' : ''}`} 
+                              style={{ height: `${height}px`, width: '8px', background: isProjected ? '#2f6feb' : '#8992a2' }} 
+                              title={`${year}: ${value}`} 
+                            />
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <small>Direction</small>
+                      <div>
+                        <span className={`trend-badge trend-${(getTrendDirection(job.trendData) || 'stable').toLowerCase()}`}>
+                          {getTrendDirection(job.trendData) === 'Rising' ? '↑' : getTrendDirection(job.trendData) === 'Declining' ? '↓' : '→'} {getTrendDirection(job.trendData) || 'Stable'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
                       <small>Growth</small>
                       <strong>{growth > 0 ? '+' : ''}{growth}%</strong>
                     </div>
                     <div>
                       <small>Employer Validation</small>
                       <strong>{job.employerValidation || 0}%</strong>
-                    </div>
-                    <div>
-                      <small>Placement</small>
-                      <strong>{job.placementRate || 0}%</strong>
                     </div>
                     <div>
                       <small>Demand Score</small>
@@ -712,7 +758,6 @@ function App() {
           </Page>
         )}
 
-        {/* SKILL GAPS */}
         {page === 'Skill Gaps' && (
           <Page>
             <h2>Skill Gap Intelligence</h2>
@@ -720,12 +765,27 @@ function App() {
               Identify the difference between industry-required skills and
               skills currently covered by training programmes.
             </p>
+            
+            <div className="filters" style={{ marginBottom: '22px' }}>
+              <div className="filter">
+                <label>Proficiency Filter</label>
+                <select value={skillGapsProficiency} onChange={(e) => setSkillGapsProficiency(e.target.value)}>
+                  <option value="All Levels">All Levels</option>
+                  {PROFICIENCY_LEVELS.map(lvl => (
+                    <option key={lvl} value={lvl}>{lvl}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div className="stats">
               <Stat title="Courses Analysed" number={courseData.length} change="Current curriculum" />
               <Stat
                 title="Total Skill Gaps"
                 number={courseData.reduce((total, course) => {
-                  const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+                  const industry = getSkillNames(course.industrySkills || [])
+                  const current = getSkillNames(course.currentSkills || [])
+                  const missing = industry.filter((s) => !current.includes(s))
                   return total + missing.length
                 }, 0)}
                 change="Industry requirements missing"
@@ -733,24 +793,37 @@ function App() {
               <Stat
                 title="Critical Gaps"
                 number={courseData.filter((course) => {
-                  const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+                  const industry = getSkillNames(course.industrySkills || [])
+                  const current = getSkillNames(course.currentSkills || [])
+                  const missing = industry.filter((s) => !current.includes(s))
                   return missing.length >= 2
                 }).length}
                 change="Immediate attention"
               />
               <Stat
                 title="Skills Covered"
-                number={new Set(courseData.flatMap((course) => course.currentSkills || [])).size}
+                number={new Set(courseData.flatMap((course) => getSkillNames(course.currentSkills || []))).size}
                 change="Existing curriculum"
               />
             </div>
 
             {courseData.map((course) => {
-              const current = course.currentSkills || []
-              const industry = course.industrySkills || []
+              const allIndustrySkillsObj = course.industrySkills || []
+              const filteredIndustrySkillsObj = skillGapsProficiency === 'All Levels' 
+                ? allIndustrySkillsObj 
+                : getSkillsByLevel(allIndustrySkillsObj, skillGapsProficiency)
+              
+              const industry = getSkillNames(filteredIndustrySkillsObj)
+              const current = getSkillNames(course.currentSkills || [])
               const missingSkills = industry.filter((skill) => !current.includes(skill))
               const alignedSkills = industry.filter((skill) => current.includes(skill))
+              
+              // Only consider skills in current filter for alignment
               const alignment = industry.length > 0 ? Math.round((alignedSkills.length / industry.length) * 100) : 100
+
+              if (industry.length === 0 && skillGapsProficiency !== 'All Levels') {
+                return null;
+              }
 
               return (
                 <div className="card skill-analysis-card" key={course.id || course.name}>
@@ -767,13 +840,18 @@ function App() {
                   <div className="skill-columns">
                     <div>
                       <h3 className="skill-heading required">Industry Required</h3>
-                      {industry.map((skill) => (
-                        <div className="skill-item" key={skill}>
-                          {current.includes(skill) ? <span className="skill-check">✓</span> : <span className="skill-cross">!</span>}
-                          <span>{skill}</span>
-                        </div>
-                      ))}
-                      {industry.length === 0 && (
+                      {filteredIndustrySkillsObj.map((skillObj) => {
+                        const name = typeof skillObj === 'string' ? skillObj : skillObj.name
+                        const level = typeof skillObj === 'string' ? 'Beginner' : (skillObj.level || 'Beginner')
+                        return (
+                          <div className="skill-item" key={name}>
+                            {current.includes(name) ? <span className="skill-check">✓</span> : <span className="skill-cross">!</span>}
+                            <span>{name}</span>
+                            <span className={`proficiency-badge proficiency-${level.toLowerCase()}`}>{level}</span>
+                          </div>
+                        )
+                      })}
+                      {filteredIndustrySkillsObj.length === 0 && (
                         <p style={{ color: '#8992a2', fontSize: '13px' }}>No requirements recorded</p>
                       )}
                     </div>
@@ -811,7 +889,6 @@ function App() {
           </Page>
         )}
 
-        {/* DISTRICT PLANS */}
         {page === 'District Plans' && (
           <Page>
             <h2>District Training Planner</h2>
@@ -822,10 +899,7 @@ function App() {
             <div className="filters">
               <div className="filter">
                 <label>District</label>
-                <select
-                  value={selectedDistrict}
-                  onChange={(e) => setSelectedDistrict(e.target.value)}
-                >
+                <select value={selectedDistrict} onChange={(e) => setSelectedDistrict(e.target.value)}>
                   {districts.map((d) => (
                     <option key={d}>{d}</option>
                   ))}
@@ -881,6 +955,7 @@ function App() {
                 const currentCapacity = Number(job.currentCapacity) || 0
                 const gap = demand - currentCapacity
                 const percentage = demand > 0 ? Math.round((currentCapacity / demand) * 100) : 0
+                const projected2027 = calculateForecast(job.trendData)
 
                 let recommendationClass = 'plan-recommendation balanced'
                 let recommendationText = 'Optimal capacity'
@@ -897,34 +972,58 @@ function App() {
                 }
 
                 return (
-                  <div className="district-plan-row" key={job.id || job.role}>
-                    <div className="district-role">
-                      <strong>{job.role}</strong>
-                      <span>{job.sector}</span>
-                    </div>
-                    <div className="district-numbers">
-                      <div>
-                        <small>Demand</small>
-                        <strong>{demand}</strong>
+                  <div key={job.id || job.role}>
+                    <div className="district-plan-row">
+                      <div className="district-role">
+                        <strong>{job.role}</strong>
+                        <span>{job.sector}</span>
                       </div>
-                      <div>
-                        <small>Capacity</small>
-                        <strong>{currentCapacity}</strong>
+                      <div className="district-numbers">
+                        <div>
+                          <small>Demand</small>
+                          <strong>{demand}</strong>
+                        </div>
+                        <div>
+                          <small>Projected 2027</small>
+                          <strong>{projected2027}</strong>
+                        </div>
+                        <div>
+                          <small>Capacity</small>
+                          <strong>{currentCapacity}</strong>
+                        </div>
+                      </div>
+                      <div className="capacity-area">
+                        <div className="capacity-label">
+                          <span>Capacity coverage</span>
+                          <strong>{Math.min(percentage, 100)}%</strong>
+                        </div>
+                        <div className="capacity-bar">
+                          <div style={{ width: `${Math.min(percentage, 100)}%` }} />
+                        </div>
+                      </div>
+                      <div className={recommendationClass}>
+                        <strong>{seatCount}</strong>
+                        <span>{recommendationText}</span>
                       </div>
                     </div>
-                    <div className="capacity-area">
-                      <div className="capacity-label">
-                        <span>Capacity coverage</span>
-                        <strong>{Math.min(percentage, 100)}%</strong>
+                    {job.trainerRequirements && (
+                      <div className="resource-section">
+                        <div className="resource-grid">
+                          <div className="resource-card">
+                            <h4>Trainer Requirements</h4>
+                            <p>Current: {job.trainerRequirements.current} | Needed: {job.trainerRequirements.needed}</p>
+                            <p>Gap: +{Math.max(job.trainerRequirements.needed - job.trainerRequirements.current, 0)} trainers</p>
+                            <small>Qualification: {job.trainerRequirements.qualification}</small>
+                          </div>
+                          <div className="resource-card">
+                            <h4>Equipment Required</h4>
+                            <div className="equipment-list">
+                              {(job.equipmentRequirements || []).map(eq => <span key={eq} className="equipment-tag">{eq}</span>)}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="capacity-bar">
-                        <div style={{ width: `${Math.min(percentage, 100)}%` }} />
-                      </div>
-                    </div>
-                    <div className={recommendationClass}>
-                      <strong>{seatCount}</strong>
-                      <span>{recommendationText}</span>
-                    </div>
+                    )}
                   </div>
                 )
               })}
@@ -932,29 +1031,30 @@ function App() {
 
             <div className="card recommendation">
               <div className="recommendation-label">PLANNING RECOMMENDATION</div>
-              <h2>Prioritise capacity expansion for emerging roles</h2>
+              <h2>{districtRecommendation ? districtRecommendation.title : 'Market Balanced'}</h2>
               <p>
-                Training capacity should be increased where projected
-                industry demand exceeds available seats. Oversupplied
-                programmes should be reviewed before adding new capacity.
+                {districtRecommendation 
+                  ? districtRecommendation.text 
+                  : 'Training capacity across the district currently meets projected industry demand. Focus on quality improvements.'}
               </p>
-              <button
-                className="primary-button"
-                onClick={() => {
-                  const filename = exportDistrictActionPlan({
-                    district: selectedDistrict,
-                    districtLabourData
-                  })
-                  showToast(`Action plan: ${filename} saved to Downloads!`, 'success')
-                }}
-              >
-                Generate District Action Plan →
-              </button>
+              {districtRecommendation && (
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    const filename = exportDistrictActionPlan({
+                      district: selectedDistrict,
+                      districtLabourData
+                    })
+                    showToast(`Action plan: ${filename} saved to Downloads!`, 'success')
+                  }}
+                >
+                  Generate District Action Plan →
+                </button>
+              )}
             </div>
           </Page>
         )}
 
-        {/* COURSES */}
         {page === 'Courses' && (
           <Page>
             <h2>Course Intelligence</h2>
@@ -965,13 +1065,15 @@ function App() {
               <Stat title="Courses Analysed" number={courseData.length} change="Industry alignment review" />
               <Stat
                 title="Courses Needing Updates"
-                number={courseData.filter((course) => (course.industrySkills || []).length > (course.currentSkills || []).length).length}
+                number={courseData.filter((course) => getSkillNames(course.industrySkills || []).length > getSkillNames(course.currentSkills || []).length).length}
                 change="Curriculum gaps detected"
               />
               <Stat
                 title="Critical Skill Gaps"
                 number={courseData.reduce((total, course) => {
-                  const missing = (course.industrySkills || []).filter((s) => !(course.currentSkills || []).includes(s))
+                  const industry = getSkillNames(course.industrySkills || [])
+                  const current = getSkillNames(course.currentSkills || [])
+                  const missing = industry.filter((s) => !current.includes(s))
                   return total + missing.length
                 }, 0)}
                 change="Skills missing from curricula"
@@ -982,8 +1084,8 @@ function App() {
                   courseData.length > 0
                     ? Math.round(
                         courseData.reduce((total, course) => {
-                          const industry = course.industrySkills || []
-                          const current = course.currentSkills || []
+                          const industry = getSkillNames(course.industrySkills || [])
+                          const current = getSkillNames(course.currentSkills || [])
                           const matched = current.filter((skill) => industry.includes(skill)).length
                           const rate = industry.length > 0 ? (matched / industry.length) * 100 : 100
                           return total + rate
@@ -1004,8 +1106,8 @@ function App() {
               </div>
 
               {courseData.map((course) => {
-                const industry = course.industrySkills || []
-                const current = course.currentSkills || []
+                const industry = getSkillNames(course.industrySkills || [])
+                const current = getSkillNames(course.currentSkills || [])
                 const missingSkills = industry.filter((skill) => !current.includes(skill))
                 const matchedCount = current.filter((skill) => industry.includes(skill)).length
                 const alignment = industry.length > 0 ? Math.round((matchedCount / industry.length) * 100) : 100
@@ -1055,24 +1157,22 @@ function App() {
 
             <div className="card recommendation">
               <div className="recommendation-label">AI RECOMMENDATION</div>
-              <h2>Prioritise EV Technician curriculum revision</h2>
+              <h2>{courseRecommendation ? courseRecommendation.title : 'Curricula Aligned'}</h2>
               <p>
-                Industry requirements currently exceed the skills covered
-                by the existing EV Technician curriculum. Add high-voltage
-                safety, EV electrical systems and CAN Bus diagnostics to
-                improve job readiness.
+                {courseRecommendation ? courseRecommendation.text : 'All reviewed course curricula align with current industry skills requirements.'}
               </p>
-              <button
-                className="primary-button"
-                onClick={() => openCurriculumWizard(evTechnicianCourse, evTechnicianMissingSkills)}
-              >
-                Create Curriculum Update →
-              </button>
+              {courseRecommendation && (
+                <button
+                  className="primary-button"
+                  onClick={() => openCurriculumWizard(courseRecommendation.course, courseRecommendation.missingSkills)}
+                >
+                  Create Curriculum Update →
+                </button>
+              )}
             </div>
           </Page>
         )}
 
-        {/* EMPLOYERS */}
         {page === 'Employers' && (
           <Page>
             <h2>Employer Validation</h2>
@@ -1080,7 +1180,6 @@ function App() {
               Industry feedback validating current hiring demand, workforce readiness and required skills.
             </p>
 
-            {/* FILTERS */}
             <div className="filters" style={{ marginBottom: '22px' }}>
               <div className="filter">
                 <label>District</label>
@@ -1135,7 +1234,7 @@ function App() {
               />
               <Stat
                 title="Skills Validated"
-                number={new Set(filteredEmployers.flatMap((emp) => emp.skills || [])).size}
+                number={new Set(filteredEmployers.flatMap((emp) => getSkillNames(emp.skills || []))).size}
                 change="Industry-requested skills"
               />
             </div>
@@ -1168,9 +1267,16 @@ function App() {
                   <div className="employer-skills">
                     <small>Required Skills</small>
                     <div>
-                      {(employer.skills || []).map((skill) => (
-                        <span className="employer-skill" key={skill}>{skill}</span>
-                      ))}
+                      {(employer.skills || []).map((skillObj) => {
+                        const name = typeof skillObj === 'string' ? skillObj : skillObj.name
+                        const level = typeof skillObj === 'string' ? 'Beginner' : (skillObj.level || 'Beginner')
+                        return (
+                          <span className="employer-skill" key={name}>
+                            {name}
+                            <span className={`proficiency-badge proficiency-${level.toLowerCase()}`}>{level}</span>
+                          </span>
+                        )
+                      })}
                     </div>
                   </div>
                 </div>
@@ -1184,22 +1290,22 @@ function App() {
 
             <div className="card recommendation">
               <div className="recommendation-label">INDUSTRY SIGNAL</div>
-              <h2>Employers are prioritising emerging technical skills</h2>
+              <h2>{employerRecommendation ? employerRecommendation.title : 'Consistent Employer Demand'}</h2>
               <p>
-                Employer feedback indicates strong demand for battery diagnostics, EV electrical systems, 
-                BMS and high-voltage safety. These requirements should be reflected in technical training curricula.
+                {employerRecommendation ? employerRecommendation.text : 'Employer feedback demonstrates steady baseline skill requirements without critical emerging outliers.'}
               </p>
-              <button
-                className="primary-button"
-                onClick={() => setPage('Skill Gaps')}
-              >
-                View Skill Requirements →
-              </button>
+              {employerRecommendation && (
+                <button
+                  className="primary-button"
+                  onClick={() => setPage('Skill Gaps')}
+                >
+                  View Skill Requirements →
+                </button>
+              )}
             </div>
           </Page>
         )}
 
-        {/* CAREER ADVISOR */}
         {page === 'Career Advisor' && (
           <Page>
             <h2>AI Career Advisor</h2>
@@ -1225,12 +1331,24 @@ function App() {
                     ))}
                   </select>
                 </div>
+                <div className="filter">
+                  <label>Education Level</label>
+                  <select value={educationLevel} onChange={e => setEducationLevel(e.target.value)}>
+                    {['10th Pass', '12th Pass', 'ITI', 'Diploma', 'B.Tech', 'M.Tech'].map(o => <option key={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div className="filter">
+                  <label>Experience</label>
+                  <select value={experienceLevel} onChange={e => setExperienceLevel(e.target.value)}>
+                    {['Fresher', '1-2 years', '3-5 years', '5+ years'].map(o => <option key={o}>{o}</option>)}
+                  </select>
+                </div>
               </div>
 
               <div className="career-skill-section">
                 <h3>Select Your Skills</h3>
                 <div className="career-skills">
-                  {[...new Set(labourData.flatMap((job) => job.skills || []))].map((skill) => (
+                  {[...new Set(labourData.flatMap((job) => getSkillNames(job.skills || [])))].map((skill) => (
                     <button
                       key={skill}
                       className={candidateSkills.includes(skill) ? 'career-skill selected' : 'career-skill'}
@@ -1267,11 +1385,17 @@ function App() {
                   const matches = labourData
                     .filter((job) => (careerInterest === 'All Sectors' ? true : (job.sector || '').includes(careerInterest)))
                     .map((job) => {
-                      const skills = job.skills || []
-                      const matchedSkills = skills.filter((skill) => candidateSkills.includes(skill))
-                      const skillMatch = skills.length ? Math.round((matchedSkills.length / skills.length) * 100) : 0
+                      const requiredSkills = getSkillNames(job.skills || [])
+                      const matchedSkills = findMatchingSkills(candidateSkills, requiredSkills)
+                      const skillMatch = requiredSkills.length ? Math.round((matchedSkills.length / requiredSkills.length) * 100) : 0
                       const demandScore = calculateDemandScore(job)
-                      const finalScore = Math.round(skillMatch * 0.6 + demandScore * 0.4)
+
+                      const eduBonus = {'10th Pass':0, '12th Pass':5, 'ITI':10, 'Diploma':15, 'B.Tech':20, 'M.Tech':25}[educationLevel] || 0
+                      const expBonus = {'Fresher':0, '1-2 years':5, '3-5 years':10, '5+ years':15}[experienceLevel] || 0
+                      const educationFit = Math.min(eduBonus * 4, 100)
+                      const experienceFit = Math.min(expBonus * 6.67, 100)
+                      
+                      const finalScore = Math.round(skillMatch * 0.4 + demandScore * 0.3 + educationFit * 0.15 + experienceFit * 0.15)
 
                       return { ...job, matchedSkills, skillMatch, finalScore, demandScore }
                     })
@@ -1286,50 +1410,59 @@ function App() {
                     )
                   }
 
-                  return matches.map((job) => (
-                    <div className="career-result" key={job.id || job.role}>
-                      <div className="career-result-main">
-                        <div>
-                          <h3>{job.role}</h3>
-                          <span>{job.sector}</span>
+                  return matches.map((job) => {
+                    const salaryRange = `₹${Math.round(job.demandScore * 400 + 15000).toLocaleString('en-IN')} - ₹${Math.round(job.demandScore * 800 + 20000).toLocaleString('en-IN')}/month`
+                    const trainingDuration = job.demandScore > 700 ? '6-12 months' : job.demandScore > 400 ? '3-6 months' : '1-3 months'
+
+                    return (
+                      <div className="career-result" key={job.id || job.role}>
+                        <div className="career-result-main">
+                          <div>
+                            <h3>{job.role}</h3>
+                            <span>{job.sector}</span>
+                          </div>
+                          <div className="career-score">
+                            <strong>{job.finalScore}%</strong>
+                            <small>Match</small>
+                          </div>
                         </div>
-                        <div className="career-score">
-                          <strong>{job.finalScore}%</strong>
-                          <small>Match</small>
+                        <div className="career-metrics">
+                          <div>
+                            <small>Skill Match</small>
+                            <strong>{job.skillMatch}%</strong>
+                          </div>
+                          <div>
+                            <small>Market Demand</small>
+                            <strong>{job.demandScore}%</strong>
+                          </div>
+                          <div>
+                            <small>Salary Est.</small>
+                            <strong>{salaryRange}</strong>
+                          </div>
+                          <div>
+                            <small>Training</small>
+                            <strong>{trainingDuration}</strong>
+                          </div>
                         </div>
+                        <div className="career-matched">
+                          <small>Matching Skills</small>
+                          {job.matchedSkills.length === 0 ? (
+                            <span className="career-gap">No matching skills yet</span>
+                          ) : (
+                            job.matchedSkills.map((skill) => (
+                              <span key={skill} className="career-match">✓ {skill}</span>
+                            ))
+                          )}
+                        </div>
+                        <button
+                          className="secondary-button"
+                          onClick={() => setPage('Courses')}
+                        >
+                          View Learning Path →
+                        </button>
                       </div>
-                      <div className="career-metrics">
-                        <div>
-                          <small>Skill Match</small>
-                          <strong>{job.skillMatch}%</strong>
-                        </div>
-                        <div>
-                          <small>Market Demand</small>
-                          <strong>{job.demandScore}%</strong>
-                        </div>
-                        <div>
-                          <small>Openings</small>
-                          <strong>{job.demand || 0}</strong>
-                        </div>
-                      </div>
-                      <div className="career-matched">
-                        <small>Matching Skills</small>
-                        {job.matchedSkills.length === 0 ? (
-                          <span className="career-gap">No matching skills yet</span>
-                        ) : (
-                          job.matchedSkills.map((skill) => (
-                            <span key={skill} className="career-match">✓ {skill}</span>
-                          ))
-                        )}
-                      </div>
-                      <button
-                        className="secondary-button"
-                        onClick={() => setPage('Courses')}
-                      >
-                        View Learning Path →
-                      </button>
-                    </div>
-                  ))
+                    )
+                  })
                 })()}
               </div>
             )}
@@ -1347,7 +1480,6 @@ function App() {
         )}
       </main>
 
-      {/* FEEDBACK TOAST */}
       {toast && (
         <div className={`toast-notification ${toast.type}`}>
           <span>{toast.type === 'success' ? '✓' : 'ℹ'}</span>
@@ -1355,7 +1487,6 @@ function App() {
         </div>
       )}
 
-      {/* MODAL DIALOGS */}
       {activeModal && (
         <div className="modal-backdrop" onClick={() => setActiveModal(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1411,7 +1542,6 @@ function App() {
         </div>
       )}
 
-      {/* CURRICULUM UPDATE WIZARD */}
       {wizard && (
         <div className="modal-backdrop" onClick={closeWizard}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1535,8 +1665,6 @@ function App() {
     </div>
   )
 }
-
-/* ---------- REUSABLE UI COMPONENTS ---------- */
 
 function Page({ children }) {
   return <div className="page-content">{children}</div>
