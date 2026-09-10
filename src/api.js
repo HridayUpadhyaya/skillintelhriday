@@ -638,3 +638,99 @@ export function exportDistrictActionPlan({ district, districtLabourData }) {
 
   return filename
 }
+/* ==========================================================================
+   Skill Intelligence Utilities
+   ========================================================================== */
+
+export const PROFICIENCY_LEVELS = [
+  'Beginner',
+  'Intermediate',
+  'Advanced',
+  'Expert'
+]
+
+export function getSkillNames(skills = []) {
+  return (skills || [])
+    .map((skill) => {
+      if (typeof skill === 'string') return skill
+      return skill?.name || ''
+    })
+    .filter(Boolean)
+}
+
+export function getSkillsByLevel(skills = [], level) {
+  return (skills || []).filter((skill) => {
+    if (typeof skill === 'string') {
+      return level === 'Beginner'
+    }
+
+    return (skill?.level || 'Beginner') === level
+  })
+}
+
+export function fuzzySkillMatch(skillA, skillB) {
+  if (!skillA || !skillB) return false
+
+  const a = String(skillA).toLowerCase().trim()
+  const b = String(skillB).toLowerCase().trim()
+
+  if (a === b) return true
+  if (a.includes(b) || b.includes(a)) return true
+
+  const normalize = (value) =>
+    value
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  return normalize(a) === normalize(b)
+}
+
+export function findMatchingSkills(candidateSkills = [], requiredSkills = []) {
+  const candidates = getSkillNames(candidateSkills)
+  const required = getSkillNames(requiredSkills)
+
+  return required.filter((requiredSkill) =>
+    candidates.some((candidateSkill) =>
+      fuzzySkillMatch(candidateSkill, requiredSkill)
+    )
+  )
+}
+
+export function calculateForecast(trendData) {
+  if (!trendData || typeof trendData !== 'object') {
+    return 0
+  }
+
+  const values = Object.entries(trendData)
+    .filter(([key, value]) => !key.includes('projected') && Number.isFinite(Number(value)))
+    .map(([, value]) => Number(value))
+
+  if (values.length === 0) return 0
+
+  const latest = values[values.length - 1]
+
+  return Math.round(latest * 1.1)
+}
+
+export function getTrendDirection(trendData) {
+  if (!trendData || typeof trendData !== 'object') {
+    return 'Stable'
+  }
+
+  const values = Object.entries(trendData)
+    .filter(([key, value]) => !key.includes('projected') && Number.isFinite(Number(value)))
+    .map(([, value]) => Number(value))
+
+  if (values.length < 2) {
+    return 'Stable'
+  }
+
+  const first = values[0]
+  const last = values[values.length - 1]
+
+  if (last > first * 1.05) return 'Rising'
+  if (last < first * 0.95) return 'Declining'
+
+  return 'Stable'
+}
